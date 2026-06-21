@@ -1,0 +1,18 @@
+[package]
+name = "confold-sync"
+description = "Synchronization actions (copy/delete) over the Confold VFS, with dry-run planning."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+confold-vfs.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+confold-core.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,21 @@
+[package]
+name = "confold-sftp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+confold-vfs = { workspace = true }
+russh = "0.61.2"
+russh-sftp = "2.3.0"
+tokio = { version = "1.52.3", features = ["rt-multi-thread", "net", "io-util", "time", "macros"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+# In-process SSH/SFTP test server: needs a host key, so we generate an ed25519 one in-test.
+rand = "0.10"
+anyhow = "1"
+
+[lints]
+workspace = true

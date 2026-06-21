@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Confold — Compare anything. Move what matters.</title>
+  <meta name="description" content="A fast, keyboard-driven folder & file comparison tool for Linux, macOS and Windows. Compare local and remote (SFTP, S3) trees, then migrate or sync them — free and open source." />
+  <meta property="og:title" content="Confold — Compare anything. Move what matters." />
+  <meta property="og:description" content="Fast folder & file compare, migrate and sync across local, SFTP and S3. Free and open source." />
+  <meta property="og:image" content="assets/hero.png" />
+  <meta property="og:type" content="website" />
+  <link rel="icon" href="assets/icon.png" />
+  <style>
+    :root {
+      --cream: #fff6ec; --ink: #1f1a17; --blue: #4c8bf5; --green: #2bb3a3; --amber: #e8a33d;
+      --card: #fffaf3; --line: #e8ddcb; --muted: #6b6258;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0; background: var(--cream); color: var(--ink);
+      font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--blue); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .wrap { max-width: 1040px; margin: 0 auto; padding: 0 1.5rem; }
+    h1, h2, h3 { line-height: 1.2; }
+
+    header.nav { position: sticky; top: 0; background: rgba(255, 246, 236, 0.85); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); z-index: 10; }
+    .nav .wrap { display: flex; align-items: center; gap: 0.7rem; padding-top: 0.7rem; padding-bottom: 0.7rem; }
+    .nav img { height: 1.9rem; }
+    .nav .name { font-weight: 800; font-size: 1.15rem; }
+    .nav .spacer { flex: 1; }
+    .nav a.ghlink { color: var(--ink); font-weight: 600; }
+
+    .btn { display: inline-block; padding: 0.7rem 1.3rem; border-radius: 10px; font-weight: 700; }
+    .btn-primary { background: var(--blue); color: #fff; }
+    .btn-primary:hover { background: #3b78e0; text-decoration: none; }
+    .btn-ghost { border: 1px solid var(--ink); color: var(--ink); }
+    .btn-ghost:hover { background: var(--ink); color: var(--cream); text-decoration: none; }
+
+    .hero { text-align: center; padding: 3.5rem 0 2rem; }
+    .hero h1 { font-size: 2.6rem; margin: 0 0 0.6rem; letter-spacing: -0.02em; }
+    .hero .sub { font-size: 1.2rem; color: var(--muted); max-width: 640px; margin: 0 auto 1.6rem; }
+    .hero .ctas { display: flex; gap: 0.8rem; justify-content: center; flex-wrap: wrap; margin-bottom: 0.6rem; }
+    .hero .tiny { color: var(--muted); font-size: 0.9rem; }
+    .hero img.shot { width: 100%; max-width: 880px; margin: 2rem auto 0; display: block; border-radius: 14px; }
+
+    section { padding: 3rem 0; }
+    section h2 { font-size: 1.8rem; text-align: center; margin: 0 0 0.4rem; }
+    section .lead { text-align: center; color: var(--muted); max-width: 640px; margin: 0 auto 2rem; }
+
+    .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1.2rem; }
+    .grid2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1.2rem; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 1.4rem; }
+    .card h3 { margin: 0.2rem 0 0.5rem; font-size: 1.2rem; }
+    .card p { margin: 0; color: var(--muted); }
+    .card .emoji { font-size: 1.6rem; }
+
+    .modes .card.compare { border-top: 4px solid var(--blue); }
+    .modes .card.migrate { border-top: 4px solid var(--amber); }
+    .modes .card.sync { border-top: 4px solid var(--green); }
+
+    .alt { background: #fdf1e1; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+
+    .shots figure.shot { margin: 0 0 2.2rem; }
+    .shots figure.shot:last-child { margin-bottom: 0; }
+    .shots .shot img { width: 100%; display: block; border-radius: 12px; border: 1px solid var(--line); box-shadow: 0 8px 28px rgba(0, 0, 0, 0.14); cursor: zoom-in; }
+    .shots .shot figcaption { text-align: center; color: var(--muted); font-size: 0.92rem; margin-top: 0.6rem; }
+
+    /* Click-to-enlarge lightbox for the screenshots. */
+    .lightbox { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 2rem; background: rgba(20, 16, 12, 0.88); cursor: zoom-out; }
+    .lightbox[hidden] { display: none; }
+    .lightbox img { max-width: 95vw; max-height: 92vh; border-radius: 10px; box-shadow: 0 16px 56px rgba(0, 0, 0, 0.55); }
+
+    table.sources { width: 100%; max-width: 640px; margin: 0 auto; border-collapse: collapse; }
+    table.sources td { padding: 0.7rem 0.6rem; border-bottom: 1px solid var(--line); }
+    table.sources td:last-child { text-align: right; color: var(--muted); }
+    .ok { color: var(--green); font-weight: 700; }
+
+    pre { background: var(--ink); color: #f3ece1; padding: 1rem 1.2rem; border-radius: 12px; overflow-x: auto; font-size: 0.9rem; }
+    .note { text-align: center; color: var(--muted); font-size: 0.95rem; margin-bottom: 1.2rem; }
+
+    ul.road { max-width: 640px; margin: 0 auto; padding-left: 1.2rem; }
+    ul.road li { margin: 0.5rem 0; }
+
+    form.contact { max-width: 520px; margin: 0 auto; display: flex; flex-direction: column; gap: 0.7rem; }
+    form.contact input, form.contact textarea { padding: 0.7rem; border: 1px solid var(--line); border-radius: 10px; font: inherit; background: var(--card); }
+
+    footer { border-top: 1px solid var(--line); padding: 2rem 0; text-align: center; color: var(--muted); font-size: 0.9rem; }
+    footer a { color: var(--ink); font-weight: 600; margin: 0 0.5rem; }
+
+    @media (max-width: 760px) {
+      .grid3, .grid2 { grid-template-columns: 1fr; }
+      .hero h1 { font-size: 2rem; }
+    }
+  </style>
+</head>
+<body>
+  <header class="nav">
+    <div class="wrap">
+      <img src="assets/logo.png" alt="" />
+      <span class="name">Confold</span>
+      <span class="spacer"></span>
+      <a href="#install">Install</a>
+      <a class="ghlink" href="https://github.com/confold/confold">GitHub</a>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="wrap">
+        <h1>Compare anything. Move what matters.</h1>
+        <p class="sub">A fast, keyboard-driven folder &amp; file comparison tool for Linux, macOS and Windows.
+          Diff local and remote trees side by side, then migrate or reconcile them — streaming huge files,
+          never waiting for a full scan.</p>
+        <div class="ctas">
+          <a class="btn btn-primary" href="#install">Get Confold</a>
+          <a class="btn btn-ghost" href="https://github.com/confold/confold">View on GitHub</a>
+        </div>
+        <p class="tiny">Free and open source · Apache-2.0</p>
+        <img class="shot" src="assets/hero.png" alt="Files from disks, drives and clouds folding into one reconciled set" />
+      </div>
+    </section>
+
+    <section class="modes">
+      <div class="wrap">
+        <h2>Three modes, one engine</h2>
+        <p class="lead">The same fast compare/reconcile engine, whichever way you need to work.</p>
+        <div class="grid3">
+          <div class="card compare">
+            <div class="emoji">🔍</div>
+            <h3>Compare</h3>
+            <p>Explore differences manually: a lazy, virtualized folder tree with live status counts,
+              word- and character-level side-by-side diffs, and hunk navigation.</p>
+          </div>
+          <div class="card migrate">
+            <div class="emoji">🔁</div>
+            <h3>Migrate</h3>
+            <p>Reconcile a destination to a source — copy new, overwrite different, delete extra — with a
+              dry-run plan, per-item checkboxes, and a streaming, cancellable apply.</p>
+          </div>
+          <div class="card sync">
+            <div class="emoji">🔀</div>
+            <h3>Sync</h3>
+            <p>Bidirectional reconciliation with conflict resolution, on the same engine as Migrate. You
+              stay in charge of every decision.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="alt">
+      <div class="wrap">
+        <h2>Built to be fast — and honest</h2>
+        <p class="lead">You never wait for a full scan, and you never copy on a guess.</p>
+        <div class="grid2">
+          <div class="card">
+            <h3>⚡ Never waits</h3>
+            <p>Shows the top level the instant you hit Compare and fills in as you explore. Folders you
+              never open are never compared. Switch compare method with zero re-scan.</p>
+          </div>
+          <div class="card">
+            <h3>🌊 Streams huge files</h3>
+            <p>Multi-GB files compare and copy in 64 KiB windows instead of loading into memory, and a byte
+              compare stops at the first difference.</p>
+          </div>
+          <div class="card">
+            <h3>🔎 A real diff, at any size</h3>
+            <p>Files too big to load show the <em>differences only</em> — changed regions with context, like
+              <code>git diff</code>. Big binaries open in a hex view. No silent truncation.</p>
+          </div>
+          <div class="card">
+            <h3>🛡️ Move, verified</h3>
+            <p>Migrate can delete the origin after a move — but only after re-verifying <em>every byte</em>
+              landed in the destination, all-or-nothing. A partial move can never strand your files.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="shots">
+      <div class="wrap">
+        <h2>See it in action</h2>
+        <p class="lead">A fast, keyboard-driven desktop app — local, SFTP and S3 on one engine.</p>
+        <figure class="shot">
+          <img src="assets/shot-compare-tree.png" alt="Folder compare tree with colored status pills" loading="lazy" />
+          <figcaption>Compare — a lazy folder tree with live status pills, counts and a status filter.</figcaption>
+        </figure>
+        <figure class="shot">
+          <img src="assets/shot-side-by-side.png" alt="Side-by-side diff with word-level highlighting" loading="lazy" />
+          <figcaption>Side-by-side — word- and character-level highlighting, hunk navigation, copy ↔.</figcaption>
+        </figure>
+        <figure class="shot">
+          <img src="assets/shot-migrate-plan.png" alt="Migrate dry-run plan with per-item checkboxes" loading="lazy" />
+          <figcaption>Migrate — a dry-run plan with per-item checkboxes before anything is written.</figcaption>
+        </figure>
+        <figure class="shot">
+          <img src="assets/shot-migrate-progress.png" alt="Verified move progress with re-verification divider" loading="lazy" />
+          <figcaption>Verified move — re-verify every byte landed, then empty the origin (all-or-nothing).</figcaption>
+        </figure>
+        <figure class="shot">
+          <img src="assets/shot-remote-s3.png" alt="Comparing a local folder against an S3 bucket" loading="lazy" />
+          <figcaption>Compare anything — local, SFTP and S3, same engine.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap">
+        <h2>Compare anything to anything</h2>
+        <p class="lead">Sources are capability-gated plugins behind one uniform interface — every backend
+          lights up the same engine.</p>
+        <table class="sources">
+          <tr><td>📁 Local filesystem</td><td class="ok">Available</td></tr>
+          <tr><td>🌐 SFTP <span style="color:var(--muted)">· pure-Rust, no OpenSSL/C</span></td><td class="ok">Available</td></tr>
+          <tr><td>☁️ S3 / S3-compatible <span style="color:var(--muted)">· AWS, MinIO, R2…</span></td><td class="ok">Available</td></tr>
+          <tr><td>SMB · NFS · WebDAV · cloud drives</td><td>Roadmap</td></tr>
+        </table>
+      </div>
+    </section>
+
+    <section class="alt" id="install">
+      <div class="wrap">
+        <h2>Install</h2>
+        <p class="note">Pre-release — build from source today. Packaged installers for macOS, Linux and
+          Windows are on the way.</p>
+        <pre><code>git clone https://github.com/confold/confold.git
+cd confold/confold-app
+pnpm install
+pnpm tauri dev      # run the desktop app
+pnpm tauri build    # build a packaged app</code></pre>
+        <p class="note">Prefer the terminal? There's a headless <code>confold</code> CLI for scripting and CI.
+          See the <a href="https://github.com/confold/confold">README</a>.</p>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap">
+        <h2>Roadmap</h2>
+        <ul class="road">
+          <li><strong>More sources</strong> — SMB, NFS, WebDAV and cloud drives, on the same engine.</li>
+          <li><strong>AI-assisted semantic reconciliation</strong> — resolve conflicts by meaning, not just bytes.</li>
+          <li><strong>Packaged installers</strong> — Homebrew, Scoop, winget, Chocolatey, <code>.deb</code>, direct downloads.</li>
+          <li><strong>Confold Cloud</strong> — a hosted "reconcile and sync across sources, from one place" service.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="alt">
+      <div class="wrap">
+        <h2>Get in touch</h2>
+        <p class="lead">Questions, ideas, or want to know when installers land?</p>
+        <!-- TODO: create a Formspree form and replace the action below (see distribution runbook). -->
+        <form class="contact" action="https://formspree.io/f/YOUR_FORM_ID" method="POST">
+          <input type="email" name="email" placeholder="your@email.com" required />
+          <textarea name="message" rows="4" placeholder="Your message"></textarea>
+          <button class="btn btn-primary" type="submit">Send</button>
+        </form>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <p><strong>Confold</strong> — compare anything, move what matters. Free, open source, cross-platform.</p>
+      <p>
+        <a href="https://github.com/confold/confold">GitHub</a> ·
+        <!-- TODO: confirm sponsor/donate accounts (see distribution runbook). -->
+        <a href="https://github.com/sponsors/juanyque">Sponsor</a> ·
+        <a href="https://ko-fi.com/juanyque">Ko-fi</a>
+      </p>
+      <p>© Confold · Apache-2.0</p>
+    </div>
+  </footer>
+
+  <!-- Screenshot lightbox: click any "in action" image to enlarge; click anywhere or press Esc to close. -->
+  <div id="lightbox" class="lightbox" hidden>
+    <img alt="" />
+  </div>
+  <script>
+    (function () {
+      var lb = document.getElementById("lightbox");
+      var lbImg = lb.querySelector("img");
+      function close() { lb.hidden = true; lbImg.removeAttribute("src"); }
+      document.querySelectorAll(".shots .shot img").forEach(function (img) {
+        img.addEventListener("click", function () {
+          lbImg.src = img.src;
+          lbImg.alt = img.alt;
+          lb.hidden = false;
+        });
+      });
+      lb.addEventListener("click", close);
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape" && !lb.hidden) close();
+      });
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+# pnpm settings (pnpm 11). Lifecycle scripts are blocked by default;
+# allowBuilds re-enables scripts for ONLY the listed, reviewed packages.
+allowBuilds:
+  esbuild: true          # official Vite bundler — compiles/links its native binary; reviewed & expected
+overrides:
+  cookie: '>=0.7.0'      # patch transitive low-sev advisory GHSA-pxg6-pf52-xh8x (via @sveltejs/kit)
+minimumReleaseAge: 1440  # minutes (~1 day) supply-chain cooldown: skip just-published versions

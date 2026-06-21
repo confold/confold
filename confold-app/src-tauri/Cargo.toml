@@ -1,0 +1,34 @@
+[package]
+name = "confold-app"
+version = "0.5.0"
+description = "A Tauri App"
+authors = ["you"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "confold_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+confold-core = { path = "../../crates/confold-core" }
+confold-sync = { path = "../../crates/confold-sync" }
+confold-textdiff = { path = "../../crates/confold-textdiff" }
+confold-sftp = { path = "../../crates/confold-sftp" }
+confold-s3 = { path = "../../crates/confold-s3" }
+
+[dev-dependencies]
+tempfile = "3"
+

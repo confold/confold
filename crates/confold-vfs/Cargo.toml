@@ -1,0 +1,18 @@
+[package]
+name = "confold-vfs"
+description = "Virtual file-system source abstraction for the Confold compare engine."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+memmap2.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

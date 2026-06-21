@@ -1,0 +1,5 @@
+# Pin the Rust toolchain for reproducible builds (per-project; does not change the global default).
+# rustup auto-installs this version on first cargo invocation in the repo.
+[toolchain]
+channel = "1.96.0"
+components = ["rustfmt", "clippy"]

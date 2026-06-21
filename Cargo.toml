@@ -1,0 +1,41 @@
+# Confold — free, cross-platform folder compare + controlled synchronization. Apache-2.0.
+[workspace]
+resolver = "2"
+members = ["crates/confold-vfs", "crates/confold-core", "crates/confold-sync", "crates/confold-textdiff", "crates/confold-cli", "crates/confold-sftp"]
+# The Tauri desktop app builds standalone (its own heavy Tauri deps) and path-depends on the engine
+# crates; keep it out of the engine workspace so `cargo build/test/lint` here stay fast.
+exclude = ["confold-app", "crates/confold-s3"]
+
+[workspace.package]
+version = "0.5.0"
+edition = "2021"
+license = "Apache-2.0"
+rust-version = "1.96"
+
+[workspace.dependencies]
+# external
+memmap2 = "0.9"
+memchr = "2"
+rayon = "1"
+globset = "0.4"
+similar = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+# dev
+tempfile = "3"
+assert_cmd = "2"
+predicates = "3"
+criterion = "0.5"
+# internal — path-only (never published to crates.io), so NO version requirement: a `version = "x"` pin
+# here must match each crate's version and would break the build on every version bump (it did, on 0.5.0).
+confold-vfs = { path = "crates/confold-vfs" }
+confold-core = { path = "crates/confold-core" }
+confold-sync = { path = "crates/confold-sync" }
+confold-textdiff = { path = "crates/confold-textdiff" }
+
+# Quality lints applied across the workspace. clippy warnings are denied in CI via `cargo lint`.
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }

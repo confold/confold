@@ -1,0 +1,7 @@
+# cargo-audit configuration. Advisories accepted with a documented rationale (mirrored in deny.toml).
+[advisories]
+# RUSTSEC-2023-0071 — "Marvin Attack" timing sidechannel in `rsa` (pulled by russh/ssh-key in
+# confold-sftp). No fixed release. Accepted (owner, 2026-06-10): the SFTP client uses RSA only to
+# sign (client auth) and verify (server host key), never as a decryption oracle, which the attack
+# requires. Revisit when upstream ships a fix. See deny.toml for the full note.
+ignore = ["RUSTSEC-2023-0071"]

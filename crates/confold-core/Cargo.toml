@@ -1,0 +1,27 @@
+[package]
+name = "confold-core"
+description = "Confold compare engine: recursive folder compare with metadata triage and content methods."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+confold-vfs.workspace = true
+rayon.workspace = true
+memchr.workspace = true
+globset.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "compare"
+harness = false
+
+[lints]
+workspace = true

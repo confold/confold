@@ -1,0 +1,82 @@
+name: Release
+
+# Tag-driven release: push a `vX.Y.Z` tag → build the Tauri app on every platform and create a DRAFT
+# GitHub release with the bundles attached. Publishing the draft (the deliberate human gate) then fires
+# the distribution workflows. Build/release is done with the official `tauri-action` (idiomatic Tauri) —
+# no hand-rolled build scripts.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS arm64 (Apple Silicon) and x86_64 (Intel) as separate bundles.
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+            args: "--target aarch64-apple-darwin"
+          - platform: macos-latest
+            target: x86_64-apple-darwin
+            args: "--target x86_64-apple-darwin"
+          - platform: ubuntu-22.04 # 22.04 for broader glibc/AppImage compatibility
+            target: ""
+            args: ""
+          - platform: windows-latest
+            target: ""
+            args: ""
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # The repo pins the toolchain via rust-toolchain.toml (1.96.0); cargo picks it up automatically.
+      # For the macOS cross-build we must add the target to the PINNED toolchain (not `stable`), so we run
+      # `rustup target add` from the repo root where the override file applies.
+      - name: Add macOS targets to the pinned toolchain
+        if: runner.os == 'macOS'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: confold-app/pnpm-lock.yaml
+
+      - name: Install Linux system dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            librsvg2-dev \
+            libayatana-appindicator3-dev \
+            build-essential
+
+      - name: Install frontend dependencies
+        working-directory: confold-app
+        run: pnpm install --frozen-lockfile
+
+      - name: Build + draft release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: confold-app
+          tagName: ${{ github.ref_name }}
+          releaseName: "Confold ${{ github.ref_name }}"
+          releaseBody: "See CHANGELOG.md for details. Packaged installers/downloads below."
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
