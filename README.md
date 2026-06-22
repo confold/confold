@@ -18,7 +18,7 @@ never waiting for a full scan, never loading what it doesn't need.
 
 ---
 
-> **v0.5.0 is out.** Install with your package manager (see [Install](#install)) or grab a build from the
+> **v0.5.1 is out.** Install with your package manager (see [Install](#install)) or grab a build from the
 > [latest release](https://github.com/confold/confold/releases/latest).
 
 ## Three modes, one engine

@@ -11,11 +11,11 @@ on:
     types: [published]
   # Manual trigger — the reliable path. `release: published` events don't fire when the
   # release was created by Actions' GITHUB_TOKEN (anti-recursion) or re-published via the API,
-  # so dispatch this directly: `gh workflow run "Publish to distributions" -f version=0.5.0`.
+  # so dispatch this directly: `gh workflow run "Publish to distributions" -f version=0.5.1`.
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to publish (e.g. 0.5.0); defaults to the latest release"
+        description: "Version to publish (e.g. 0.5.1); defaults to the latest release"
         required: false
 
 permissions:

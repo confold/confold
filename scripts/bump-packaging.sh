@@ -108,6 +108,7 @@ p "s|Confold_[0-9.]+_amd64\\.AppImage|Confold_${VERSION}_amd64.AppImage|g"      
 p "s|Confold_[0-9.]+_amd64\\.deb|Confold_${VERSION}_amd64.deb|g"                  web/index.html
 p "s|Confold-[0-9.]+-1\\.x86_64\\.rpm|Confold-${VERSION}-1.x86_64.rpm|g"          web/index.html
 p "s|<code>v[0-9.]+</code>|<code>v${VERSION}</code>|"                             web/index.html
+p "s/v[0-9]+\\.[0-9]+\\.[0-9]+( &nbsp;·)/v${VERSION}\$1/"                         web/index.html
 
 echo ""
 echo "Done — all manifests at ${VERSION}."

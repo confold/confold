@@ -75,8 +75,9 @@
     .hero h1 { font-size: 2.6rem; margin: 0 0 0.6rem; letter-spacing: -0.02em; }
     .hero .sub { font-size: 1.2rem; color: var(--muted); max-width: 640px; margin: 0 auto 1.6rem; }
     .hero .ctas { display: flex; gap: 0.8rem; justify-content: center; flex-wrap: wrap; margin-bottom: 0.6rem; }
-    .hero .tiny { color: var(--muted); font-size: 0.9rem; }
     .hero img.shot { width: 100%; max-width: 880px; margin: 2rem auto 0; display: block; border-radius: 14px; }
+    .hero-badge { display: inline-flex; align-items: center; gap: 8px; background: var(--card); border: 1px solid var(--line); border-radius: 100px; padding: 0.35em 1em; font-size: 0.8rem; font-weight: 500; color: var(--muted); margin-bottom: 1.4rem; letter-spacing: 0.01em; }
+    .badge-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 6px var(--green); flex-shrink: 0; }
 
     section { padding: 3rem 0; }
     section h2 { font-size: 1.8rem; text-align: center; margin: 0 0 0.4rem; }
@@ -145,6 +146,10 @@
   <main>
     <section class="hero">
       <div class="wrap">
+        <div class="hero-badge">
+          <span class="badge-dot"></span>
+          v0.5.1 &nbsp;·&nbsp; Free &amp; open source
+        </div>
         <h1>Compare anything. Move what matters.</h1>
         <p class="sub">A fast, keyboard-driven folder &amp; file comparison tool for Linux, macOS and Windows.
           Diff local and remote trees side by side, then migrate or reconcile them — streaming huge files,
@@ -153,7 +158,6 @@
           <a class="btn btn-primary" href="#install">Get Confold</a>
           <a class="btn btn-ghost" href="https://github.com/confold/confold">View on GitHub</a>
         </div>
-        <p class="tiny">Free and open source · Apache-2.0</p>
         <img class="shot" src="assets/hero.png" alt="Files from disks, drives and clouds folding into one reconciled set" />
       </div>
     </section>

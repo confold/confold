@@ -6,7 +6,14 @@ All notable changes to Confold are documented here. The format is based on
 
 ## [Unreleased]
 
-## [0.5.0] — unreleased
+## [0.5.1] — unreleased
+
+### Fixed
+- macOS bundles are now ad-hoc signed, so Gatekeeper shows the standard "unidentified developer"
+  prompt with an **Open Anyway** button in System Settings → Privacy & Security, instead of the
+  "damaged and can't be opened" dead-end on Sonoma and later.
+
+## [0.5.0] — 2026-06-22
 
 First public release. (Versions 0.1–0.4 were internal development milestones.)
 
@@ -21,5 +28,6 @@ First public release. (Versions 0.1–0.4 were internal development milestones.)
 - **Sync** — bidirectional reconciliation with conflict resolution, on the Migrate engine.
 - Cross-platform desktop app (Tauri v2 + Svelte 5) for Linux, macOS and Windows.
 
-[Unreleased]: https://github.com/confold/confold/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/confold/confold/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/confold/confold/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/confold/confold/releases/tag/v0.5.0

@@ -447,7 +447,7 @@ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
 name = "confold-cli"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -461,7 +461,7 @@ dependencies = [
 
 [[package]]
 name = "confold-core"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "confold-vfs",
  "criterion",
@@ -476,7 +476,7 @@ dependencies = [
 
 [[package]]
 name = "confold-sftp"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "anyhow",
  "confold-vfs",
@@ -489,7 +489,7 @@ dependencies = [
 
 [[package]]
 name = "confold-sync"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "confold-core",
  "confold-vfs",
@@ -499,7 +499,7 @@ dependencies = [
 
 [[package]]
 name = "confold-textdiff"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "serde",
  "similar",
@@ -507,7 +507,7 @@ dependencies = [
 
 [[package]]
 name = "confold-vfs"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "memmap2",
  "serde",
