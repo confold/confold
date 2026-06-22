@@ -109,9 +109,13 @@ winget install Confold.Confold
 brew install confold/confold/confold
 ```
 
-> Builds aren't code-signed yet: on macOS, right-click the app → **Open** on first launch; on Windows,
-> **More info → Run anyway**. Package-manager availability also rolls out per channel — winget and Chocolatey
-> may lag a few days behind a release while they clear moderation.
+> **macOS:** the app is ad-hoc signed but not notarized. On first launch macOS blocks it — go to
+> **System Settings → Privacy & Security** and click **Open Anyway**. (If you somehow see
+> *"damaged and can't be opened"* instead, run `sudo xattr -rd com.apple.quarantine /Applications/Confold.app`.)
+>
+> **Windows:** click **More info → Run anyway** when SmartScreen prompts.
+>
+> Package-manager availability rolls out per channel — winget and Chocolatey may lag a few days behind a release while they clear moderation.
 
 ### Build from source
 

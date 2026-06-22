@@ -72,6 +72,10 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Ad-hoc sign macOS bundles (no certificate needed; "-" is the codesign identity for
+          # hash-based signing). This upgrades the UX from "damaged, move to Trash" (no escape)
+          # to "unidentified developer" (System Settings → Privacy & Security → Open Anyway).
+          APPLE_SIGNING_IDENTITY: "-"
         with:
           projectPath: confold-app
           tagName: ${{ github.ref_name }}
