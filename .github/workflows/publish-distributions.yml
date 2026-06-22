@@ -9,6 +9,14 @@ name: Publish to distributions
 on:
   release:
     types: [published]
+  # Manual trigger — the reliable path. `release: published` events don't fire when the
+  # release was created by Actions' GITHUB_TOKEN (anti-recursion) or re-published via the API,
+  # so dispatch this directly: `gh workflow run "Publish to distributions" -f version=0.5.0`.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (e.g. 0.5.0); defaults to the latest release"
+        required: false
 
 permissions:
   contents: read
@@ -29,7 +37,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.DIST_GITHUB_TOKEN }}
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          elif [[ -n "${{ github.event.inputs.version }}" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq '.tagName' | sed 's/^v//')
+          fi
 
           # Update a file in a remote repo via the GitHub Contents API.
           # Works for both updates (sha required) and creates (no sha).
@@ -63,7 +77,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.DIST_GITHUB_TOKEN }}
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          elif [[ -n "${{ github.event.inputs.version }}" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq '.tagName' | sed 's/^v//')
+          fi
           SHA=$(gh api repos/confold/scoop-confold/contents/bucket/confold.json --jq '.sha' 2>/dev/null || true)
           args=(
             --method PUT
@@ -86,7 +106,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.DIST_GITHUB_TOKEN }}
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          elif [[ -n "${{ github.event.inputs.version }}" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq '.tagName' | sed 's/^v//')
+          fi
           BRANCH="confold-${VERSION}"
           MANIFEST_DIR="manifests/c/Confold/Confold/${VERSION}"
           FORK="juanyque/winget-pkgs"
