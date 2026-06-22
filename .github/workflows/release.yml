@@ -33,7 +33,7 @@ jobs:
             args: ""
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # The repo pins the toolchain via rust-toolchain.toml (1.96.0); cargo picks it up automatically.
       # For the macOS cross-build we must add the target to the PINNED toolchain (not `stable`), so we run
@@ -47,7 +47,7 @@ jobs:
         with:
           version: 11
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: pnpm

@@ -1,0 +1,75 @@
+name: Publish Chocolatey
+
+# Fires automatically when a GitHub release is published, and can also be run manually
+# for re-pushes. The dist/chocolatey manifest must already be bumped (sha256 + version)
+# on main — see scripts/bump-packaging.sh.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Package version (e.g. 0.5.1)"
+        required: true
+        default: "0.5.1"
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Always read the bumped manifest from main, not the tag tree.
+          ref: main
+
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Pack and push
+        env:
+          CHOCO_API_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
+        shell: pwsh
+        run: |
+          cd dist/chocolatey
+          choco pack
+          $nupkg = "confold.${{ steps.ver.outputs.version }}.nupkg"
+
+          # push.chocolatey.org intermittently returns 504 Gateway Timeout. Retry with
+          # backoff, and treat an "already exists" response as success (idempotent re-runs).
+          $maxAttempts = 4
+          for ($i = 1; $i -le $maxAttempts; $i++) {
+            Write-Host "Push attempt $i/$maxAttempts..."
+            $output = (choco push $nupkg `
+              --source https://push.chocolatey.org/ `
+              --api-key $env:CHOCO_API_KEY `
+              --timeout 300 2>&1 | Out-String)
+            Write-Host $output
+
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host "Push succeeded."
+              exit 0
+            }
+            # A bare 403 Forbidden on push means the version already exists (Chocolatey
+            # refuses to overwrite). Auth happens before this, so a valid key + 403 ==
+            # duplicate. Treat as success so re-runs after a flaky 504 are idempotent.
+            if ($output -match 'already (exists|been submitted)' -or
+                $output -match 'version with the same' -or
+                $output -match '403 \(Forbidden\)') {
+              Write-Host "Version already on Chocolatey — treating as success."
+              exit 0
+            }
+            if ($i -lt $maxAttempts) {
+              $wait = 30 * $i
+              Write-Host "Push failed (likely a transient 504). Retrying in $wait s..."
+              Start-Sleep -Seconds $wait
+            }
+          }
+          Write-Error "choco push failed after $maxAttempts attempts (Chocolatey server 504s)."
+          exit 1

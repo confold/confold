@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>confold</id>
+    <version>0.5.0</version>
+    <packageSourceUrl>https://github.com/confold/confold/tree/main/dist/chocolatey</packageSourceUrl>
+    <owners>juanyque</owners>
+    <title>Confold</title>
+    <authors>Juan García Longarón</authors>
+    <projectUrl>https://confold.com</projectUrl>
+    <iconUrl>https://raw.githubusercontent.com/confold/confold/main/web/assets/icon.png</iconUrl>
+    <licenseUrl>https://github.com/confold/confold/blob/main/LICENSE</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <projectSourceUrl>https://github.com/confold/confold</projectSourceUrl>
+    <bugTrackerUrl>https://github.com/confold/confold/issues</bugTrackerUrl>
+    <docsUrl>https://github.com/confold/confold#readme</docsUrl>
+    <tags>confold compare diff folder sync migrate files sftp s3</tags>
+    <summary>Fast, keyboard-driven folder and file comparison, migrate and sync tool</summary>
+    <description>
+Confold is a fast, keyboard-driven folder and file comparison tool for Linux, macOS and
+Windows. It diffs local and remote trees — local disk, SFTP and S3/cloud storage — side by
+side, then migrates or syncs exactly what differs, streaming huge files and never waiting
+for a full scan.
+
+This package downloads and installs the official Windows release built from the project's
+public source on GitHub.
+    </description>
+    <releaseNotes>https://github.com/confold/confold/releases/tag/v0.5.0</releaseNotes>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>

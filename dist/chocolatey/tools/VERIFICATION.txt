@@ -1,0 +1,21 @@
+VERIFICATION
+
+Confold is published by the software author (Juan García Longarón) on GitHub:
+  https://github.com/confold/confold/releases/tag/v0.5.0
+
+This package downloads the official Windows installer and verifies its SHA256:
+
+  File:   Confold_0.5.0_x64-setup.exe
+  SHA256: FF051F5D8700FD394A55768427DF70878124E0CAF95DAE92D19884619E339CD9
+
+To verify the checksum yourself:
+
+  PowerShell:
+    Get-FileHash .\Confold_0.5.0_x64-setup.exe -Algorithm SHA256
+
+  GitHub CLI:
+    gh release view v0.5.0 --repo confold/confold --json assets `
+      --jq '.assets[] | select(.name | endswith("x64-setup.exe")) | .digest'
+
+The bundled LICENSE.txt is a copy of the project's Apache-2.0 license:
+  https://github.com/confold/confold/blob/main/LICENSE
