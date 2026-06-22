@@ -115,6 +115,8 @@ jobs:
               gh issue edit "$EXISTING" --repo "$REPO" --body "$BODY"
               echo "Updated tracking issue #${EXISTING} (pending: ${pending[*]})."
             else
+              gh label create release-watch --repo "$REPO" --color BFD4F2 \
+                --description "Distribution propagation tracking" 2>/dev/null || true
               gh issue create --repo "$REPO" --title "$TITLE" --body "$BODY" --label "release-watch"
               echo "Opened tracking issue (pending: ${pending[*]})."
             fi
