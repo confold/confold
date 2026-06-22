@@ -1,12 +1,12 @@
 {
-    "version": "0.5.0",
+    "version": "0.5.1",
     "description": "Fast, keyboard-driven folder & file comparison, migrate and sync tool",
     "homepage": "https://confold.com",
     "license": "Apache-2.0",
     "architecture": {
         "64bit": {
-            "url": "https://github.com/confold/confold/releases/download/v0.5.0/Confold_0.5.0_x64-setup.exe#/dl.7z",
-            "hash": "ff051f5d8700fd394a55768427df70878124e0caf95dae92d19884619e339cd9"
+            "url": "https://github.com/confold/confold/releases/download/v0.5.1/Confold_0.5.1_x64-setup.exe#/dl.7z",
+            "hash": "950b6e0c673a82c73ca9793ccc753f59906faacf9f57fed1e17aa644b53d8b7a"
         }
     },
     "bin": "Confold.exe",

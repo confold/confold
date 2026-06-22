@@ -1,14 +1,14 @@
 cask "confold" do
   # Update version + both sha256 values on each release (use scripts/bump-packaging.sh).
-  version "0.5.0"
+  version "0.5.1"
 
   on_arm do
-    sha256 "9bc994e16528c38a30bc64e0fd12524e3ce45a14b9e1036172932c83959a8fa8"
+    sha256 "47dc3f27bb4c999c4a7eb7f53a7516355029705667f6311c042913744801e7a5"
     url "https://github.com/confold/confold/releases/download/v#{version}/Confold_#{version}_aarch64.dmg"
   end
 
   on_intel do
-    sha256 "15e5e0a1108f8dfe000f03c82fed5edfa93fc42dea8834a7efa0e1940f7c5e0a"
+    sha256 "f6a7baad1ded7ccaf3f875a6325def6e7e59410a68df894e8933b71f6fd88fe3"
     url "https://github.com/confold/confold/releases/download/v#{version}/Confold_#{version}_x64.dmg"
   end
 
