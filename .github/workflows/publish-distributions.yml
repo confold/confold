@@ -63,6 +63,7 @@ jobs:
           TAP="confold/homebrew-confold"
           update_file "$TAP" Casks/confold.rb   dist/brew/Casks/confold.rb   "confold ${VERSION}: update cask"
           update_file "$TAP" Formula/confold.rb dist/brew/Formula/confold.rb "confold ${VERSION}: update formula"
+          update_file "$TAP" README.md          dist/brew/tap.README.md      "confold ${VERSION}: update README"
 
   # ── Scoop bucket ──────────────────────────────────────────────────────────────
   scoop:
@@ -92,6 +93,16 @@ jobs:
           )
           [[ -n "$SHA" ]] && args+=(--field "sha=${SHA}")
           gh api repos/confold/scoop-confold/contents/bucket/confold.json "${args[@]}"
+
+          # README for the bucket repo's landing page (kept in sync from the main repo).
+          RSHA=$(gh api repos/confold/scoop-confold/contents/README.md --jq '.sha' 2>/dev/null || true)
+          rargs=(
+            --method PUT
+            --field "message=confold ${VERSION}: update README"
+            --field "content=$(base64 -w 0 < dist/scoop/bucket.README.md)"
+          )
+          [[ -n "$RSHA" ]] && rargs+=(--field "sha=${RSHA}")
+          gh api repos/confold/scoop-confold/contents/README.md "${rargs[@]}"
 
   # ── winget (PR to microsoft/winget-pkgs) ──────────────────────────────────────
   winget:

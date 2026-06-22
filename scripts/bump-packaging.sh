@@ -90,10 +90,24 @@ p "s|/v[0-9.]+/Confold_[0-9.]+_x64-setup\\.exe|/v${VERSION}/Confold_${VERSION}_x
 p "s/'[0-9A-F]{64}'/'${SHA_WIN_NSIS_UP}'/"                                                      dist/chocolatey/tools/chocolateyinstall.ps1
 p "s|<version>[^<]*</version>|<version>${VERSION}</version>|"                                   dist/chocolatey/confold.nuspec
 p "s|releases/tag/v[0-9.]+|releases/tag/v${VERSION}|g"                                          dist/chocolatey/confold.nuspec
+p "s|jsdelivr.net/gh/confold/confold@v[0-9.]+/|jsdelivr.net/gh/confold/confold@v${VERSION}/|"   dist/chocolatey/confold.nuspec
 p "s|releases/tag/v[0-9.]+|releases/tag/v${VERSION}|g"                                          dist/chocolatey/tools/VERIFICATION.txt
 p "s|release view v[0-9.]+|release view v${VERSION}|g"                                          dist/chocolatey/tools/VERIFICATION.txt
 p "s/Confold_[0-9.]+_x64-setup\\.exe/Confold_${VERSION}_x64-setup.exe/g"                        dist/chocolatey/tools/VERIFICATION.txt
 p "s/[0-9A-F]{64}/${SHA_WIN_NSIS_UP}/"                                                          dist/chocolatey/tools/VERIFICATION.txt
+
+# ── Website (versioned direct-download links + version label) ─────────────────
+# Cloudflare Pages redeploys web/ on push to main, so the download buttons track each release.
+echo "Updating website download links..."
+p "s|releases/download/v[0-9.]+/Confold|releases/download/v${VERSION}/Confold|g"  web/index.html
+p "s|Confold_[0-9.]+_aarch64\\.dmg|Confold_${VERSION}_aarch64.dmg|g"              web/index.html
+p "s|Confold_[0-9.]+_x64\\.dmg|Confold_${VERSION}_x64.dmg|g"                      web/index.html
+p "s|Confold_[0-9.]+_x64-setup\\.exe|Confold_${VERSION}_x64-setup.exe|g"          web/index.html
+p "s|Confold_[0-9.]+_x64_en-US\\.msi|Confold_${VERSION}_x64_en-US.msi|g"          web/index.html
+p "s|Confold_[0-9.]+_amd64\\.AppImage|Confold_${VERSION}_amd64.AppImage|g"        web/index.html
+p "s|Confold_[0-9.]+_amd64\\.deb|Confold_${VERSION}_amd64.deb|g"                  web/index.html
+p "s|Confold-[0-9.]+-1\\.x86_64\\.rpm|Confold-${VERSION}-1.x86_64.rpm|g"          web/index.html
+p "s|<code>v[0-9.]+</code>|<code>v${VERSION}</code>|"                             web/index.html
 
 echo ""
 echo "Done — all manifests at ${VERSION}."

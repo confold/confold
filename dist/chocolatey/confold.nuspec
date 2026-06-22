@@ -8,7 +8,7 @@
     <title>Confold</title>
     <authors>Juan García Longarón</authors>
     <projectUrl>https://confold.com</projectUrl>
-    <iconUrl>https://raw.githubusercontent.com/confold/confold/main/web/assets/icon.png</iconUrl>
+    <iconUrl>https://cdn.jsdelivr.net/gh/confold/confold@v0.5.0/web/assets/icon.png</iconUrl>
     <licenseUrl>https://github.com/confold/confold/blob/main/LICENSE</licenseUrl>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
     <projectSourceUrl>https://github.com/confold/confold</projectSourceUrl>
