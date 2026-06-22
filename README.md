@@ -18,8 +18,8 @@ never waiting for a full scan, never loading what it doesn't need.
 
 ---
 
-> **Pre-release.** Build from source today (see [Install](#install)); packaged installers for macOS, Linux
-> and Windows are on the way.
+> **v0.5.0 is out.** Install with your package manager (see [Install](#install)) or grab a build from the
+> [latest release](https://github.com/confold/confold/releases/latest).
 
 ## Three modes, one engine
 
@@ -84,7 +84,35 @@ Sources are **capability-gated plugins** behind one uniform interface, so every 
 
 ## Install
 
-> Pre-release — build from source for now.
+Pick your platform — or download a build (`.dmg`, `.msi`/`.exe`, `.deb`/`.rpm`/`.AppImage`) from the
+[latest release](https://github.com/confold/confold/releases/latest).
+
+**macOS** — Homebrew:
+
+```sh
+brew tap confold/confold
+brew install --cask confold
+```
+
+**Windows** — winget, Scoop or Chocolatey:
+
+```powershell
+winget install Confold.Confold
+# or:  scoop bucket add confold https://github.com/confold/scoop-confold && scoop install confold
+# or:  choco install confold
+```
+
+**Linux** — the `.deb`, `.rpm` or `.AppImage` from the
+[latest release](https://github.com/confold/confold/releases/latest), or via Homebrew:
+
+```sh
+brew install confold/confold/confold
+```
+
+> Availability rolls out per channel; winget and Chocolatey may lag a few days behind a release while they
+> clear moderation.
+
+### Build from source
 
 **Requirements:** [Rust](https://rustup.rs) (1.96+), [Node + pnpm](https://pnpm.io), and the Tauri v2
 system webview deps for your OS (macOS: Xcode CLT; Linux: `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`,
@@ -132,7 +160,7 @@ visual smokes, and in-process SFTP/S3 hermetic harnesses — no Docker).
 - **More sources** — SMB, NFS, WebDAV, cloud drives, on the same engine.
 - **AI-assisted semantic reconciliation** — the differentiator: help resolve conflicts by *meaning*, not
   just bytes.
-- **Packaged installers** — Homebrew, Scoop, winget, Chocolatey, `.deb`, and direct downloads.
+- **Signed & notarized builds** — code-signing for macOS and Windows to drop the install-time prompts.
 - **Confold Cloud** — a hosted "reconcile and sync across sources, from one place" service (later).
 
 ## Contributing
@@ -143,6 +171,11 @@ Issues and PRs welcome. Run the quality gates before submitting:
 cargo test --all && cargo lint && cargo fmt --all --check     # engine + CLI
 cd confold-app && pnpm test && pnpm check                     # GUI (vitest + svelte-check)
 ```
+
+## Support
+
+Confold is free and open source. If it saves you time, a small one-time thank-you keeps development moving —
+[Ko-fi](https://ko-fi.com/juanyque) · [GitHub Sponsors](https://github.com/sponsors/juanyque).
 
 ## License
 
