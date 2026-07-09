@@ -688,7 +688,7 @@ dependencies = [
 
 [[package]]
 name = "confold-app"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "confold-core",
  "confold-s3",
@@ -706,7 +706,7 @@ dependencies = [
 
 [[package]]
 name = "confold-core"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "confold-vfs",
  "globset",
@@ -719,7 +719,7 @@ dependencies = [
 
 [[package]]
 name = "confold-s3"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "bytes",
  "confold-vfs",
@@ -730,7 +730,7 @@ dependencies = [
 
 [[package]]
 name = "confold-sftp"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "confold-vfs",
  "russh",
@@ -740,7 +740,7 @@ dependencies = [
 
 [[package]]
 name = "confold-sync"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "confold-vfs",
  "serde",
@@ -748,7 +748,7 @@ dependencies = [
 
 [[package]]
 name = "confold-textdiff"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "serde",
  "similar",
@@ -756,7 +756,7 @@ dependencies = [
 
 [[package]]
 name = "confold-vfs"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "memmap2",
  "serde",

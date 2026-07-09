@@ -1,3 +1,6 @@
 /target
 **/*.rs.bk
 .DS_Store
+
+# Graphify knowledge graph (generated, regenerable via `graphify .`)
+graphify-out/
