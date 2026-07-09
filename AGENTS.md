@@ -13,9 +13,24 @@ GUI, and eventually AI-assisted **semantic** reconciliation.
 
 ## Current phase
 
-**Phase 1 (MVP) implemented.** A headless compare engine (`confold-core`) over a pluggable VFS source
-abstraction (`confold-vfs`), plus a CLI (`confold`). Local filesystem only; no GUI yet. Next: **Phase 2** — the
-interactive compare-and-sync GUI (web UI + Tauri).
+**v0.5.1 shipped (public release).** Confold is a complete, cross-platform folder-compare and sync tool
+with a Tauri v2 + Svelte 5 desktop GUI, a headless CLI, and a layered engine crate architecture.
+
+**Three modes on one engine:** Compare (lazy/incremental folder tree, metadata + byte-level content
+compare, side-by-side/hex/image diff), Migrate (reconcile destination to match origin, with verified
+move semantics — all-or-nothing delete after full byte re-verify), and Sync (bidirectional with
+conflict resolution).
+
+**Sources:** Local filesystem, SFTP (pure-Rust `russh`), and S3/S3-compatible (pure-Rust
+`object_store`) — all behind a uniform plugin interface (`SourceKind` registry, Level 1 capability-gated
+descriptors). Adding S3 required zero frontend changes, proving the plugin model.
+
+**Distribution:** GitHub releases (`github.com/confold/confold`), web (`confold.com`, Cloudflare Pages),
+Homebrew + Scoop + Chocolatey + winget. Ad-hoc macOS signing (no Apple Developer account needed).
+
+**Next: Phase 6** — OS shell / file-browser integration (right-click "Compare with Confold" via
+`confold://` URI scheme + `tauri-plugin-deep-link`). Spec proposed, awaiting approval. Later: deeper
+sources (SMB, NFS, WebDAV), AI-assisted semantic reconciliation.
 
 Application code is written against an **approved spec** (see Workflow below).
 

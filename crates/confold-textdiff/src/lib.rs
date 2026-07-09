@@ -437,13 +437,25 @@ pub fn is_binary_bytes(data: &[u8]) -> bool {
 /// (standard unified-diff behaviour: the context of one overlaps the context of the other).
 /// Returns at most `max_hunks` hunks starting from hunk index `start_hunk` (0 for the first page).
 /// `is_complete` is false if more hunks remain; `next_hunk_index` gives the cursor for the next call.
-pub fn diff_hunks(left: &str, right: &str, context: usize, max_hunks: usize, start_hunk: usize) -> FileDiffHunks {
+pub fn diff_hunks(
+    left: &str,
+    right: &str,
+    context: usize,
+    max_hunks: usize,
+    start_hunk: usize,
+) -> FileDiffHunks {
     // Compute the full aligned diff first (required by Myers — we can't skip this).
     // We then extract only the hunk windows; the equal rows in between are discarded.
     let full = diff_text(left, right);
     let rows = &full.rows;
     if rows.is_empty() {
-        return FileDiffHunks { hunks: Vec::new(), summary: DiffSummary::default(), is_complete: true, total_hunks: 0, next_hunk_index: None };
+        return FileDiffHunks {
+            hunks: Vec::new(),
+            summary: DiffSummary::default(),
+            is_complete: true,
+            total_hunks: 0,
+            next_hunk_index: None,
+        };
     }
 
     // Find the index spans [start, end) of non-equal runs in the row array.
@@ -452,7 +464,9 @@ pub fn diff_hunks(left: &str, right: &str, context: usize, max_hunks: usize, sta
     while i < rows.len() {
         if rows[i].kind != RowKind::Equal {
             let start = i;
-            while i < rows.len() && rows[i].kind != RowKind::Equal { i += 1; }
+            while i < rows.len() && rows[i].kind != RowKind::Equal {
+                i += 1;
+            }
             change_spans.push((start, i));
         } else {
             i += 1;
@@ -460,12 +474,19 @@ pub fn diff_hunks(left: &str, right: &str, context: usize, max_hunks: usize, sta
     }
 
     if change_spans.is_empty() {
-        return FileDiffHunks { hunks: Vec::new(), summary: DiffSummary::default(), is_complete: true, total_hunks: 0, next_hunk_index: None };
+        return FileDiffHunks {
+            hunks: Vec::new(),
+            summary: DiffSummary::default(),
+            is_complete: true,
+            total_hunks: 0,
+            next_hunk_index: None,
+        };
     }
 
     // Expand each span by `context` lines on each side, then merge overlapping/adjacent windows.
     let n = rows.len();
-    let mut windows: Vec<(usize, usize)> = change_spans.iter()
+    let mut windows: Vec<(usize, usize)> = change_spans
+        .iter()
         .map(|&(s, e)| (s.saturating_sub(context), (e + context).min(n)))
         .collect();
     // Merge windows whose ranges overlap or touch.
@@ -493,18 +514,28 @@ pub fn diff_hunks(left: &str, right: &str, context: usize, max_hunks: usize, sta
         let hunk_rows: Vec<DiffRow> = rows[ws..we].to_vec();
         for r in &hunk_rows {
             match r.kind {
-                RowKind::Equal   => summary.equal += 1,
-                RowKind::Insert  => summary.inserted += 1,
-                RowKind::Delete  => summary.deleted += 1,
+                RowKind::Equal => summary.equal += 1,
+                RowKind::Insert => summary.inserted += 1,
+                RowKind::Delete => summary.deleted += 1,
                 RowKind::Replace => summary.replaced += 1,
             }
         }
         let left_start = hunk_rows.iter().find_map(|r| r.left_no).unwrap_or(1);
         let right_start = hunk_rows.iter().find_map(|r| r.right_no).unwrap_or(1);
-        hunks.push(DiffHunk { rows: hunk_rows, left_start, right_start });
+        hunks.push(DiffHunk {
+            rows: hunk_rows,
+            left_start,
+            right_start,
+        });
     }
 
-    FileDiffHunks { hunks, summary, is_complete, total_hunks: if is_complete { total_hunks } else { 0 }, next_hunk_index }
+    FileDiffHunks {
+        hunks,
+        summary,
+        is_complete,
+        total_hunks: if is_complete { total_hunks } else { 0 },
+        next_hunk_index,
+    }
 }
 
 #[cfg(test)]
@@ -637,7 +668,9 @@ mod tests {
         // window — we get at most 2 hunks (one before and one for the change) but always at least 1.
         assert!(!result.hunks.is_empty());
         // Every changed line should be represented across the hunks.
-        let changed_count: usize = result.hunks.iter()
+        let changed_count: usize = result
+            .hunks
+            .iter()
             .flat_map(|h| h.rows.iter())
             .filter(|r| r.kind != RowKind::Equal)
             .count();
@@ -675,7 +708,9 @@ mod tests {
         // 10 changes spread out → 10 hunks, but max_hunks=3.
         let left: Vec<String> = (1..=100).map(|i| format!("line{}\n", i)).collect();
         let mut right = left.clone();
-        for i in (0..100).step_by(10) { right[i] = format!("CHANGED{}\n", i); }
+        for i in (0..100).step_by(10) {
+            right[i] = format!("CHANGED{}\n", i);
+        }
         let r = diff_hunks(&left.concat(), &right.concat(), 3, 3, 0);
         assert_eq!(r.hunks.len(), 3);
         assert!(!r.is_complete);
@@ -689,14 +724,18 @@ mod tests {
         // each hunk exactly once, in order, with the cursor advancing correctly.
         let left: Vec<String> = (1..=100).map(|i| format!("line{}\n", i)).collect();
         let mut right = left.clone();
-        for i in (0..100).step_by(10) { right[i] = format!("CHANGED{}\n", i); }
+        for i in (0..100).step_by(10) {
+            right[i] = format!("CHANGED{}\n", i);
+        }
         let (l, r) = (left.concat(), right.concat());
 
         let mut seen_starts = Vec::new();
         let mut start = 0;
         loop {
             let page = diff_hunks(&l, &r, 3, 3, start);
-            for h in &page.hunks { seen_starts.push(h.left_start); }
+            for h in &page.hunks {
+                seen_starts.push(h.left_start);
+            }
             match page.next_hunk_index {
                 Some(n) => start = n,
                 None => break,
@@ -704,7 +743,10 @@ mod tests {
         }
         // 10 hunks total, strictly increasing start lines, no duplicates.
         assert_eq!(seen_starts.len(), 10);
-        assert!(seen_starts.windows(2).all(|w| w[0] < w[1]), "hunks out of order or duplicated");
+        assert!(
+            seen_starts.windows(2).all(|w| w[0] < w[1]),
+            "hunks out of order or duplicated"
+        );
     }
 
     #[test]

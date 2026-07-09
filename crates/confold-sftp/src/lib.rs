@@ -434,7 +434,9 @@ impl SourceMut for SftpSource {
     }
 
     fn supports_atomic_replace(&self) -> bool {
-        *self.atomic_replace.get_or_init(|| self.probe_rename_support())
+        *self
+            .atomic_replace
+            .get_or_init(|| self.probe_rename_support())
     }
 
     fn create_dir_all(&self, rel: &RelPath) -> Result<(), SourceError> {
@@ -463,7 +465,10 @@ impl SourceMut for SftpSource {
                                 Ok(meta) if meta.file_type().is_dir()
                             );
                             if !exists_as_dir {
-                                return Err(map_sftp(&rel, russh_sftp::client::error::Error::Status(s)));
+                                return Err(map_sftp(
+                                    &rel,
+                                    russh_sftp::client::error::Error::Status(s),
+                                ));
                             }
                         }
                         Err(e) => return Err(map_sftp(&rel, e)),

@@ -120,8 +120,13 @@ fn compare_at_loads_one_level_with_full_rel_paths() {
         ..CompareConfig::default()
     };
     let start = RelPath::root().child("sub");
-    let report = compare_at(&LocalSource::new(l.path()), &LocalSource::new(r.path()), &start, &cfg)
-        .unwrap();
+    let report = compare_at(
+        &LocalSource::new(l.path()),
+        &LocalSource::new(r.path()),
+        &start,
+        &cfg,
+    )
+    .unwrap();
     let map = status_map(&report);
 
     // Children are reported relative to the source ROOT (prefixed by `sub/`), not the sub-path.
@@ -164,7 +169,14 @@ fn list_level_defers_file_verdicts_then_compare_file_resolves_them() {
 
     // Listing pass: file contents are NOT read — both-sides files are "comparing", not yet judged.
     let report = list_level(&ls, &rs, &RelPath::root(), &cfg).unwrap();
-    let child = |name: &str| report.root.children.iter().find(|c| c.name == name).unwrap();
+    let child = |name: &str| {
+        report
+            .root
+            .children
+            .iter()
+            .find(|c| c.name == name)
+            .unwrap()
+    };
 
     let same = child("same.txt");
     assert_eq!(same.status, DiffStatus::Skipped);
@@ -240,13 +252,19 @@ fn mtime_method_compares_modified_times() {
     // Equal mtimes → Identical.
     set_mtime(&l.path().join("f"), 1500);
     set_mtime(&r.path().join("f"), 1500);
-    assert_eq!(status_map(&run(l.path(), r.path(), &cfg))["f"], DiffStatus::Identical);
+    assert_eq!(
+        status_map(&run(l.path(), r.path(), &cfg))["f"],
+        DiffStatus::Identical
+    );
 
     // Differing mtimes → Different (even though the bytes match).
     set_mtime(&r.path().join("f"), 9000);
     let report = run(l.path(), r.path(), &cfg);
     assert_eq!(status_map(&report)["f"], DiffStatus::Different);
-    assert_eq!(child(&report, "f").detail.as_deref(), Some("modified time differs"));
+    assert_eq!(
+        child(&report, "f").detail.as_deref(),
+        Some("modified time differs")
+    );
 }
 
 #[test]
@@ -263,11 +281,17 @@ fn size_and_mtime_method_requires_both_equal() {
     // Same size + same mtime → Identical (content is not consulted).
     set_mtime(&l.path().join("f"), 1500);
     set_mtime(&r.path().join("f"), 1500);
-    assert_eq!(status_map(&run(l.path(), r.path(), &cfg))["f"], DiffStatus::Identical);
+    assert_eq!(
+        status_map(&run(l.path(), r.path(), &cfg))["f"],
+        DiffStatus::Identical
+    );
 
     // Same size, different mtime → Different.
     set_mtime(&r.path().join("f"), 9000);
-    assert_eq!(status_map(&run(l.path(), r.path(), &cfg))["f"], DiffStatus::Different);
+    assert_eq!(
+        status_map(&run(l.path(), r.path(), &cfg))["f"],
+        DiffStatus::Different
+    );
 }
 
 #[cfg(unix)]
@@ -297,7 +321,10 @@ fn type_mismatch_file_vs_dir_is_different() {
     let report = run(l.path(), r.path(), &CompareConfig::default());
     let x = child(&report, "x");
     assert_eq!(x.status, DiffStatus::Different);
-    assert_eq!(x.detail.as_deref(), Some("type differs (file vs directory)"));
+    assert_eq!(
+        x.detail.as_deref(),
+        Some("type differs (file vs directory)")
+    );
 }
 
 #[test]
@@ -306,7 +333,9 @@ fn quick_method_samples_large_files() {
     // and the interior quarters via range_equal — the streaming sampler that had no coverage before).
     let big = vec![7u8; 128 * 1024]; // 7 (no NUL) → treated as text
     let cfg = CompareConfig {
-        method: CompareMethod::Quick { large_file_threshold: 1000 },
+        method: CompareMethod::Quick {
+            large_file_threshold: 1000,
+        },
         ..CompareConfig::default()
     };
 

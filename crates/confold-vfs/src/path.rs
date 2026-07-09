@@ -79,7 +79,10 @@ mod tests {
         let p = RelPath::root().child("a").child("b").child("c.txt");
         assert_eq!(p.parent(), Some(RelPath::root().child("a").child("b")));
         // Parent of a top-level item is the root.
-        assert_eq!(RelPath::root().child("top.txt").parent(), Some(RelPath::root()));
+        assert_eq!(
+            RelPath::root().child("top.txt").parent(),
+            Some(RelPath::root())
+        );
         // The root has no parent.
         assert_eq!(RelPath::root().parent(), None);
     }

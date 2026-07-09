@@ -137,7 +137,17 @@ fn compare_directory(
     let children = items
         .par_iter()
         .map(|(name, (l, r))| {
-            compare_entry(left, right, rel, name, l.as_ref(), r.as_ref(), cfg, read_files, progress)
+            compare_entry(
+                left,
+                right,
+                rel,
+                name,
+                l.as_ref(),
+                r.as_ref(),
+                cfg,
+                read_files,
+                progress,
+            )
         })
         .collect();
     Ok(children)

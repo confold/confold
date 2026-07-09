@@ -569,7 +569,9 @@ fn copy_from_streams_large_file() {
     // copy's read-block / write-block loop (multiple READ + WRITE packets) with bounded memory, and
     // confirms the bytes are reproduced exactly. `data.read_at` (source) runs outside the dest
     // `block_on`, so the two runtimes' `block_on`s never nest.
-    let data: Vec<u8> = (0..200_000u32).map(|i| (i.wrapping_mul(31) % 253) as u8).collect();
+    let data: Vec<u8> = (0..200_000u32)
+        .map(|i| (i.wrapping_mul(31) % 253) as u8)
+        .collect();
     let expected = data.clone();
     with_connected_source(
         move |root| write(root, "big-src.bin", &data),
@@ -603,7 +605,10 @@ fn supports_atomic_replace_true_when_server_has_rename() {
                 .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
                 .filter(|n| n.contains("confold-probe"))
                 .collect();
-            assert!(probe_leftovers.is_empty(), "probe leftovers: {probe_leftovers:?}");
+            assert!(
+                probe_leftovers.is_empty(),
+                "probe leftovers: {probe_leftovers:?}"
+            );
         },
     );
 }

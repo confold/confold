@@ -21,9 +21,11 @@ mod filter;
 mod model;
 mod render;
 
-pub use compare::{compare, compare_at, compare_at_with_progress, compare_file, list_level, ProgressFn};
-pub use content::full_equal;
+pub use compare::{
+    compare, compare_at, compare_at_with_progress, compare_file, list_level, ProgressFn,
+};
 pub use config::{CompareConfig, CompareMethod, DEFAULT_LARGE_FILE_THRESHOLD};
+pub use content::full_equal;
 pub use error::EngineError;
 pub use filter::FilterSet;
 pub use model::{DiffEntry, DiffReport, DiffStatus, Summary};

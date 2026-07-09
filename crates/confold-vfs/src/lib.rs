@@ -246,7 +246,11 @@ mod copy_from_tests {
         // Wrote to a temp sibling (not the final path), then renamed temp → final. No cleanup.
         let written = m.written.lock().unwrap();
         assert_eq!(written.len(), 1);
-        assert!(written[0].contains("confold-tmp"), "wrote to {}", written[0]);
+        assert!(
+            written[0].contains("confold-tmp"),
+            "wrote to {}",
+            written[0]
+        );
         let renamed = m.renamed.lock().unwrap();
         assert_eq!(renamed.len(), 1);
         assert_eq!(renamed[0].0, written[0]); // from == the temp we wrote

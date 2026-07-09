@@ -321,7 +321,10 @@ mod tests {
 
         // A copy that fails after 50 bytes must NOT touch the destination (temp+rename: the partial
         // write went to a temp sibling, which is cleaned up on failure).
-        let bad = FailingReader { total: 200, fail_after: 50 };
+        let bad = FailingReader {
+            total: 200,
+            fail_after: 50,
+        };
         let err = dst.copy_from(&target, &bad).unwrap_err();
         assert!(matches!(err, SourceError::Other(_)));
 
