@@ -23,6 +23,7 @@
     onskip,
     onsaved,
     onback,
+    onregisterexit,
   }: {
     initial: FileDiff;
     /** Each side as a source + relative path — what `save_file` writes through (any writable backend). */
@@ -49,6 +50,9 @@
     onsaved?: (what: "left" | "right" | "both") => void;
     /** If provided, a "← Back" button appears (folder-tree open); omitted in files mode. */
     onback?: () => void;
+    /** The parent registers a callback here so its Escape handler can delegate to this component's
+     *  unsaved-changes guard instead of closing directly. */
+    onregisterexit?: (fn: (() => void) | null) => void;
   } = $props();
 
   // Seeded once from `initial`; the parent wraps us in {#key leftPath+rightPath}, so a new file pair
@@ -176,7 +180,18 @@
   }
 
   function onKey(e: KeyboardEvent) {
-    if (!e.altKey || e.metaKey || e.ctrlKey) return;
+    if (exitConfirm) {
+      const actions = [saveAndExit, exitWithoutSaving, () => (exitConfirm = false)];
+      if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+        e.preventDefault();
+        confirmFocus = (confirmFocus + (e.key === "ArrowRight" ? 1 : 2)) % 3;
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        actions[confirmFocus]();
+      }
+      return;
+    }
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
     const t = e.target as HTMLElement | null;
     if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
     if (e.key === "ArrowDown") {
@@ -185,12 +200,12 @@
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       prevChange();
-    } else if (e.key === "ArrowRight") {
+    } else if (e.key === "ArrowRight" && !readOnly) {
       e.preventDefault();
-      copyCurrent("lr", true); // copy current → right and advance
-    } else if (e.key === "ArrowLeft") {
+      copyCurrent("lr", true);
+    } else if (e.key === "ArrowLeft" && !readOnly) {
       e.preventDefault();
-      copyCurrent("rl", true); // copy current → left and advance
+      copyCurrent("rl", true);
     }
   }
 
@@ -448,13 +463,45 @@
     if (side) await save(side, true, true);
   }
 
+  let exitConfirm = $state(false);
+  let confirmFocus = $state(0);
+
+  function attemptExit() {
+    if (exitConfirm) {
+      exitConfirm = false;
+      return;
+    }
+    if (!readOnly && (leftDirty || rightDirty)) {
+      confirmFocus = 0;
+      exitConfirm = true;
+    } else {
+      onback?.();
+    }
+  }
+
+  async function saveAndExit() {
+    exitConfirm = false;
+    await saveBoth();
+    onback?.();
+  }
+
+  function exitWithoutSaving() {
+    exitConfirm = false;
+    onback?.();
+  }
+
+  $effect(() => {
+    onregisterexit?.(attemptExit);
+    return () => onregisterexit?.(null);
+  });
+
 </script>
 
 <svelte:document onselectionchange={onSelChange} />
 <svelte:window onkeydown={onKey} />
 
 <div class="sbs-wrapper">
-<FileViewHeader {name} {onback} {readOnly} {onkeep} {onskip}>
+<FileViewHeader {name} onback={attemptExit} {readOnly} {onkeep} {onskip}>
   {#snippet right()}
     <span class="fcount">
       <span class="s-rep">{diff.summary.replaced} changed</span>
@@ -466,18 +513,18 @@
 
 <div class="bar">
   <span class="grp">
-    <button class="ghost nav" disabled={!canNav} title="previous change (Alt+↑)" aria-label="previous change" onclick={prevChange}>↑</button>
-    <button class="ghost nav" disabled={!canNav} title="next change (Alt+↓)" aria-label="next change" onclick={nextChange}>↓</button>
+    <button class="ghost nav" disabled={!canNav} title="previous change (↑)" aria-label="previous change" onclick={prevChange}>↑</button>
+    <button class="ghost nav" disabled={!canNav} title="next change (↓)" aria-label="next change" onclick={nextChange}>↓</button>
     <span class="nav-count" title="current change / total">{curClamped >= 0 ? `${curClamped + 1} / ${hunkStarts.length}` : "—"}</span>
     <button class="ghost nav" class:on={showDetail} title="toggle the line detail pane" onclick={() => (showDetail = !showDetail)}>⊟</button>
     <button class="ghost nav wc-toggle" class:on={wordMode} title="word- vs character-level diff" onclick={() => (wordMode = !wordMode)}>{wordMode ? "W" : "C"}</button>
   </span>
   {#if !readOnly}
   <span class="grp">
-    <button class="ghost" disabled={curClamped < 0 || busy} title="copy current change → right" onclick={() => copyCurrent("lr", false)}>→</button>
-    <button class="ghost" disabled={curClamped < 0 || busy} title="copy current change → left" onclick={() => copyCurrent("rl", false)}>←</button>
-    <button class="ghost" disabled={curClamped < 0 || busy} title="copy current → right, then next (Alt+→)" onclick={() => copyCurrent("lr", true)}>→»</button>
-    <button class="ghost" disabled={curClamped < 0 || busy} title="copy current → left, then next (Alt+←)" onclick={() => copyCurrent("rl", true)}>«←</button>
+    <button class="ghost" disabled={curClamped < 0 || busy} title="copy current change → right (→)" onclick={() => copyCurrent("lr", false)}>→</button>
+    <button class="ghost" disabled={curClamped < 0 || busy} title="copy current change → left (←)" onclick={() => copyCurrent("rl", false)}>←</button>
+    <button class="ghost" disabled={curClamped < 0 || busy} title="copy current → right, then next" onclick={() => copyCurrent("lr", true)}>→»</button>
+    <button class="ghost" disabled={curClamped < 0 || busy} title="copy current → left, then next" onclick={() => copyCurrent("rl", true)}>«←</button>
     <button class="ghost" disabled={!hasDiff || busy} title="copy every change → right" onclick={() => copyAll("lr")}>⇉</button>
     <button class="ghost" disabled={!hasDiff || busy} title="copy every change → left" onclick={() => copyAll("rl")}>⇇</button>
   </span>
@@ -578,6 +625,19 @@
     onmousedown={(e) => e.preventDefault()}
     onclick={moveSelection}
   >{sel.side === "left" ? "→" : "←"}</button>
+{/if}
+
+{#if exitConfirm}
+<div class="exit-overlay" role="dialog" aria-modal="true">
+  <div class="exit-dialog">
+    <p>You have unsaved changes. Save before leaving?</p>
+    <div class="exit-actions">
+      <button class="save" class:focused={confirmFocus === 0} disabled={busy} onclick={saveAndExit}>Save and exit</button>
+      <button class="danger" class:focused={confirmFocus === 1} onclick={exitWithoutSaving}>Exit without saving</button>
+      <button class="ghost" class:focused={confirmFocus === 2} onclick={() => (exitConfirm = false)}>Cancel</button>
+    </div>
+  </div>
+</div>
 {/if}
 </div>
 
@@ -889,6 +949,27 @@
   .kind-delete .right,
   .kind-insert .left { background: rgba(128, 128, 128, 0.06); }
 
+  .exit-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.35);
+  }
+  .exit-dialog {
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    padding: 1.2rem 1.5rem;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+    max-width: 24rem;
+  }
+  .exit-dialog p { margin: 0 0 0.8rem; font-size: 0.9rem; }
+  .exit-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .exit-actions .focused { outline: 3px solid #396cd8; outline-offset: 1px; }
+
   @media (prefers-color-scheme: dark) {
     .sbs { background: #232323; border-color: #3a3a3a; }
     .ln { border-right-color: #444; }
@@ -896,5 +977,7 @@
     .detail { background: #232323; border-color: #3a3a3a; }
     .detail-bar { border-bottom-color: #3a3a3a; }
     .dline .sign { background: #232323; }
+    .exit-overlay { background: rgba(0, 0, 0, 0.6); }
+    .exit-dialog { background: #2a2a2a; border-color: #444; color: #eee; }
   }
 </style>

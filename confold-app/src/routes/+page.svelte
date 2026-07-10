@@ -1,7 +1,7 @@
 <script lang="ts">
   import { commands } from "$lib/commands";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import type { DiffReport, DiffStatus, CompareOpts, SyncAction, ActionOutcome, SyncOp, DiffEntry, DiffResult, DiffFileResult, LargeDiffResult, FileDiffHunks, FileMeta, SourceSpec, FileRef, SourceTypeInfo } from "$lib/types";
 
@@ -15,7 +15,7 @@
   import { selection, clearSelection, toggle } from "$lib/selection.svelte";
   import { hidden, toggleStatus, nodeVisible } from "$lib/filter.svelte";
   import { sortState, sortEntries } from "$lib/sort.svelte";
-  import { isOpen, toggleOpen, clearExpanded } from "$lib/expand.svelte";
+  import { isOpen, toggleOpen, clearExpanded, expanded } from "$lib/expand.svelte";
   import { SvelteSet } from "svelte/reactivity";
   import DiffNode from "./DiffNode.svelte";
   import MigrateConfigPanel from "./MigrateConfigPanel.svelte";
@@ -196,6 +196,7 @@
     | (OpenedFileBase & { loading: false; result: DiffResult; leftMeta: FileMeta; rightMeta: FileMeta })
     | (OpenedFileBase & { loading: false; hunks: FileDiffHunks; leftMeta: FileMeta; rightMeta: FileMeta });
   let openedFile = $state<OpenedFile | null>(null);
+  let sbsExitHandler: (() => void) | null = $state(null);
 
   // Large-file warning dialog state.
   let largeFileConfirm = $state<{ name: string; left: FileRef; right: FileRef; leftSize: number; rightSize: number } | null>(null);
@@ -730,8 +731,33 @@
 
   // A file was saved from the side-by-side → the folder report is now stale; re-compare so the tree
   // reflects the new on-disk state (a file just made equal stops showing as "different").
+  // Preserves the user's tree position (expansion, cursor, scroll, focus path) across the re-scan.
   async function onFileSaved(what: "left" | "right" | "both") {
+    const savedExpanded = [...expanded];
+    const savedCursor = cursor;
+    const savedScrollTop = scrollTop;
+    const savedFocusPath = [...focusPath];
+
     await runCompare();
+
+    for (const k of savedExpanded) expanded.add(k);
+
+    if (report) {
+      const reloadKeys = [...new Set([...savedExpanded, savedFocusPath.join("/")])];
+      reloadKeys.sort((a, b) => a.split("/").length - b.split("/").length);
+      for (const key of reloadKeys) {
+        if (!key) continue;
+        const entry = entryAtPath(report.root, key.split("/"));
+        if (entry && isPending(entry)) await onExpand(entry);
+      }
+    }
+
+    cursor = savedCursor;
+    focusPath = savedFocusPath;
+
+    await tick();
+    if (treeEl) treeEl.scrollTop = savedScrollTop;
+
     const label = what === "both" ? "both files" : `the ${what} file`;
     flashMsg(`Saved ${label} and refreshed the comparison.`);
   }
@@ -743,7 +769,10 @@
       if (picking) picking = null;
       else if (plan) cancelAction();
       else if (cancelConfirm) cancelConfirm = false;
-      else if (openedFile) closeOpenedFile();
+      else if (openedFile) {
+        if (sbsExitHandler) sbsExitHandler();
+        else closeOpenedFile();
+      }
       else if (focusPath.length) leaveFolder(); // pop one folder level before leaving the comparison
       else if (comparing) cancelConfirm = true; // ask before discarding the comparison
       else quitApp(); // Esc on the entry screen quits the app
@@ -1177,6 +1206,16 @@
     else if (cursor >= rows.length) cursor = rows.length - 1;
   });
 
+  // Restore tree scroll when returning from the side-by-side (the tree DOM is rebuilt, losing scrollTop).
+  let wasFileOpen = $state(false);
+  $effect(() => {
+    const fileOpen = !!openedFile;
+    if (wasFileOpen && !fileOpen && treeEl) {
+      treeEl.scrollTop = scrollTop;
+    }
+    wasFileOpen = fileOpen;
+  });
+
   // Scroll the cursor row into view within the virtualized container (DOM scrollTop drives `scrollTop`).
   function scrollCursorIntoView() {
     if (!treeEl || cursor < 0) return;
@@ -1238,10 +1277,25 @@
         }
         break;
       case "ArrowLeft":
-        // Open folder → collapse; collapsed folder or file → previous row.
+        // Open folder → collapse; collapsed folder or file → jump to parent (VS Code pattern);
+        // at root level (no parent) → previous row.
         e.preventDefault();
-        if (entry.is_dir && isOpen(key)) toggleOpen(key);
-        else moveCursor(-1);
+        if (entry.is_dir && isOpen(key)) {
+          toggleOpen(key);
+        } else {
+          const parentDepth = rows[cursor].depth - 1;
+          if (parentDepth >= 0) {
+            for (let i = cursor - 1; i >= 0; i--) {
+              if (rows[i].depth === parentDepth) {
+                cursor = i;
+                scrollCursorIntoView();
+                break;
+              }
+            }
+          } else {
+            moveCursor(-1);
+          }
+        }
         break;
       case "Enter":
         // Folder → drill into it; file → open the side-by-side.
@@ -1447,6 +1501,7 @@
           onkeep={afterFileBack === "plan" ? keepFromPlan : undefined}
           onskip={afterFileBack === "plan" ? skipFromPlan : undefined}
           onback={closeOpenedFile}
+          onregisterexit={(fn) => (sbsExitHandler = fn)}
         />
       {/key}
     {:else if openedFile.result.kind === "text"}
@@ -1467,6 +1522,7 @@
           onskip={afterFileBack === "plan" ? skipFromPlan : undefined}
           onsaved={onFileSaved}
           onback={closeOpenedFile}
+          onregisterexit={(fn) => (sbsExitHandler = fn)}
         />
       {/key}
     {:else if openedFile.result.kind === "binary"}
