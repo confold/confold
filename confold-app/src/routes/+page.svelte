@@ -29,6 +29,7 @@
   import ImageView from "./ImageView.svelte";
   import SourcePicker from "./SourcePicker.svelte";
   import { isImagePath } from "$lib/imagediff";
+  import { isComparing, hunksToFileDiff, splitPath, fileRefOf, refKey, makeOpts } from "$lib/utils/compare-helpers";
 
   // Origen / Destino sources (any type). Replaces the old Left/Right path inputs.
   let originSpec = $state<SourceSpec | null>(null);
@@ -135,9 +136,7 @@
   let verdictFlushScheduled = false;
 
   // Is this a file whose verdict is still being computed in the background?
-  function isComparing(e: DiffEntry): boolean {
-    return !e.is_dir && e.status === "skipped" && e.detail === "comparing";
-  }
+  // (isComparing is imported from $lib/utils/compare-helpers)
   // Patch a streamed verdict onto its file node in the tree. Returns false if the node isn't present
   // yet (its level hasn't been spliced) so the caller can buffer it.
   function applyVerdict(key: string, v: Verdict): boolean {
@@ -393,42 +392,7 @@
 
   // Split an absolute/remote path into [parent dir, filename] (handles `/` and `\`).
   // Convert a FileDiffHunks (paginated) into a FileDiff understood by SideBySide.
-  // Equal rows between hunks are replaced by a single sentinel "equal" row with a special detail
-  // string ("…") so the renderer can show a visual separator instead of real content.
-  function hunksToFileDiff(h: import("$lib/types").FileDiffHunks): import("$lib/types").FileDiff {
-    const rows: import("$lib/types").DiffRow[] = [];
-    for (let i = 0; i < h.hunks.length; i++) {
-      if (i > 0) {
-        // Separator row between hunks — shown as "…" in the gutter.
-        rows.push({
-          left_no: null, right_no: null, kind: "equal",
-          left: null, right: null,
-          left_words: [], right_words: [], left_words_w: [], right_words_w: [],
-        } as import("$lib/types").DiffRow);
-      }
-      rows.push(...h.hunks[i].rows);
-    }
-    return { rows, summary: h.summary };
-  }
-
-  function splitPath(p: string): [string, string] {
-    const i = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
-    return i < 0 ? [".", p] : [p.slice(0, i), p.slice(i + 1)];
-  }
-  // Files mode: a single file → a FileRef rooted at its parent dir + rel = filename (any source type).
-  function fileRefOf(spec: SourceSpec): FileRef {
-    const [dir, name] = splitPath(spec.fields.root ?? "");
-    // fs roots can be empty (cwd); other backends keep an absolute "/" base.
-    const root = dir || (spec.kind === "fs" ? "" : "/");
-    return { source: { kind: spec.kind, fields: { ...spec.fields, root } }, rel: name };
-  }
-  // Stable identity for `{#key}` remounts of the file views.
-  const refKey = (r: FileRef) => `${r.source.fields.root ?? ""}/${r.rel}`;
-
-  // Build compare options from a method + the comma-separated exclude field (trimmed, blanks dropped).
-  function makeOpts(m: CompareOpts["method"], excludeStr: string): CompareOpts {
-    return { method: m, include: [], exclude: parseExclude(excludeStr) };
-  }
+  // hunksToFileDiff, splitPath, fileRefOf, refKey, makeOpts: imported from $lib/utils/compare-helpers
 
   async function runCompare() {
     if (!originSpec || !destSpec) return;
