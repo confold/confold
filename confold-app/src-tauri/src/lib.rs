@@ -4,6 +4,7 @@ mod apply;
 mod diff;
 mod plan;
 mod scan;
+mod shell;
 mod sources;
 
 // ── External crate imports (re-exported to submodules via `use super::*`) ───────────────────────
@@ -52,17 +53,27 @@ use scan::{AppState, compare, compare_level, test_source};
 use plan::{migrate_actions, sync_actions};
 use apply::{migrate_apply, migrate_cancel, plan_actions, apply_actions};
 use diff::{diff_file, diff_file_large, diff_strings, save_file, hex_compare, read_bytes, source_types};
+use shell::{install_shell_integration, uninstall_shell_integration, shell_integration_status};
 
 pub fn run() {
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_dialog::init());
+
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|_app, _argv, _cwd| {}));
+        builder = builder.plugin(tauri_plugin_deep_link::init());
+    }
+
+    builder
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             compare, compare_level, test_source,
             migrate_actions, sync_actions,
             migrate_apply, migrate_cancel, plan_actions, apply_actions,
             diff_file, diff_file_large, diff_strings, save_file, hex_compare, read_bytes, source_types,
+            install_shell_integration, uninstall_shell_integration, shell_integration_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

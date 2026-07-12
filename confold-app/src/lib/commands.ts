@@ -110,4 +110,8 @@ export const commands = {
 
   /** Probe a source config: reachable? directory or single file? */
   testSource: (spec: SourceSpec) => invoke<TestResult>("test_source", { spec }),
+
+  installShellIntegration: () => invoke<void>("install_shell_integration"),
+  uninstallShellIntegration: () => invoke<void>("uninstall_shell_integration"),
+  shellIntegrationStatus: () => invoke<{ installed: boolean }>("shell_integration_status"),
 };

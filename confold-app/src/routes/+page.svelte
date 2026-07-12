@@ -208,6 +208,13 @@
   let applying = $state(false);
   let resultMsg = $state("");
   let msgTimer: ReturnType<typeof setTimeout> | undefined;
+  let shellMsg = $state("");
+  let shellMsgTimer: ReturnType<typeof setTimeout> | undefined;
+  function flashShell(m: string) {
+    shellMsg = m;
+    clearTimeout(shellMsgTimer);
+    shellMsgTimer = setTimeout(() => (shellMsg = ""), 4000);
+  }
 
   // Show a transient banner that auto-dismisses (so a confirmation doesn't linger forever).
   function flashMsg(m: string) {
@@ -313,6 +320,41 @@
       const v = await getVersion();
       if (v) appVersion = `v${v}`;
     } catch { /* non-Tauri environment — no version label */ }
+  });
+
+  // Deep-link handler: confold://compare?origin=<path>&destination=<path>
+  // Fired by OS context-menu entries (Quick Action / .desktop / registry verb).
+  onMount(() => {
+    let unlisten: UnlistenFn | undefined;
+    import("@tauri-apps/plugin-deep-link")
+      .then(async ({ getCurrent, onOpenUrl }) => {
+        const handleUrls = (urls: string[]) => {
+          for (const raw of urls) {
+            try {
+              const url = new URL(raw);
+              if (url.protocol !== "confold:" || url.host !== "compare") continue;
+              const o = url.searchParams.get("origin");
+              const d = url.searchParams.get("destination");
+              if (o && d) {
+                openedFile = null;
+                mode = "compare";
+                originSpec = { kind: "fs", fields: { root: o } };
+                destSpec = { kind: "fs", fields: { root: d } };
+                runCompare();
+              } else if (o) {
+                originSpec = { kind: "fs", fields: { root: o } };
+              }
+            } catch { /* malformed URL — ignore */ }
+          }
+        };
+
+        const startUrls = await getCurrent();
+        if (startUrls) handleUrls(startUrls);
+
+        onOpenUrl((urls) => handleUrls(urls)).then((u) => (unlisten = u));
+      })
+      .catch(() => { /* non-Tauri environment — deep-link unavailable */ });
+    return () => unlisten?.();
   });
 
   // Streamed migrate progress events + final done event from the background thread.
@@ -1315,6 +1357,31 @@
   // (The plan virtualizer + per-category counts now live inside <MigratePlanModal>.)
   // Still needed here: the checked-item total feeds the progress modal's "≈N" reference.
   const planCheckedTotal = $derived(checkedItemTotal(migrateActions ?? [], migrateChecked));
+
+  let shellInstalled = $state(false);
+  let shellBusy = $state(false);
+  async function toggleShellIntegration() {
+    if (shellBusy) return;
+    shellBusy = true;
+    try {
+      if (shellInstalled) {
+        await commands.uninstallShellIntegration();
+        shellInstalled = false;
+        flashShell("Removed.");
+      } else {
+        await commands.installShellIntegration();
+        shellInstalled = true;
+        flashShell("Installed. Right-click a folder → Services.");
+      }
+    } catch (e) {
+      error = String(e);
+    } finally {
+      shellBusy = false;
+    }
+  }
+  onMount(() => {
+    commands.shellIntegrationStatus().then((s) => (shellInstalled = s.installed)).catch(() => {});
+  });
 </script>
 
 <svelte:window onkeydown={onWindowKey} onclick={() => (modeMenuOpen = false)} />
@@ -1445,7 +1512,14 @@
       {/if}
     </div>
   </div>
-    </div>
+  <div class="entry-shell-toggle">
+    <label class="ctl">
+      <input type="checkbox" checked={shellInstalled} disabled={shellBusy} onchange={toggleShellIntegration} />
+      Folder right-click integration
+    </label>
+    {#if shellMsg}<span class="shell-msg">{shellMsg}</span>{/if}
+  </div>
+  </div>
   </div>
   {:else}
   {#if !openedFile}
@@ -2064,6 +2138,22 @@
   .entry-bottom {
     padding-bottom: 0;
   }
+  .entry-shell-toggle {
+    position: fixed;
+    bottom: 0.5rem;
+    left: 0.75rem;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    opacity: 0.5;
+    font-size: 0.8rem;
+  }
+  .entry-shell-toggle:hover {
+    opacity: 1;
+  }
+  .shell-msg {
+    color: #2a8c3f;
+  }
   .compact-bar {
     display: flex;
     align-items: center;
@@ -2526,6 +2616,9 @@
     }
     .result {
       background: #1f3a26;
+    }
+    .shell-msg {
+      color: #6abf7a;
     }
     .modal {
       background: #2a2a2a;

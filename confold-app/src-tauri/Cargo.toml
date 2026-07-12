@@ -29,6 +29,10 @@ confold-textdiff = { path = "../../crates/confold-textdiff" }
 confold-sftp = { path = "../../crates/confold-sftp" }
 confold-s3 = { path = "../../crates/confold-s3" }
 
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+tauri-plugin-deep-link = "2"
+
 [dev-dependencies]
 tempfile = "3"
 
