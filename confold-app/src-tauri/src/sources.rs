@@ -38,7 +38,7 @@ use confold_textdiff::{diff_text, diff_hunks, is_binary_bytes, FileDiff, FileDif
 
 /// A data source chosen in the UI: a registered kind id + flat config values. The generic wire DTO —
 /// construction goes through the `SourceKind` registry below. Adding a backend never touches this type.
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Serialize, Clone)]
 pub(crate) struct SourceSpec {
     /// Registered source-kind id (e.g. `"fs"`, `"sftp"`), matching `SourceKind::id`.
     pub(crate) kind: String,

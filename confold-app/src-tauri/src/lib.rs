@@ -3,6 +3,7 @@
 mod apply;
 mod diff;
 mod plan;
+mod recents;
 mod scan;
 mod shell;
 mod sources;
@@ -54,6 +55,7 @@ use plan::{migrate_actions, sync_actions};
 use apply::{migrate_apply, migrate_cancel, plan_actions, apply_actions};
 use diff::{diff_file, diff_file_large, diff_strings, save_file, hex_compare, read_bytes, source_types};
 use shell::{install_shell_integration, uninstall_shell_integration, shell_integration_status};
+use recents::{load_recents, save_recents, path_exists};
 
 pub fn run() {
     let mut builder = tauri::Builder::default()
@@ -74,6 +76,7 @@ pub fn run() {
             migrate_apply, migrate_cancel, plan_actions, apply_actions,
             diff_file, diff_file_large, diff_strings, save_file, hex_compare, read_bytes, source_types,
             install_shell_integration, uninstall_shell_integration, shell_integration_status,
+            load_recents, save_recents, path_exists,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

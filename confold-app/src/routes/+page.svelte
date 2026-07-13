@@ -34,10 +34,12 @@
   // Origen / Destino sources (any type). Replaces the old Left/Right path inputs.
   let originSpec = $state<SourceSpec | null>(null);
   let destSpec = $state<SourceSpec | null>(null);
-  let originRecents = $state<{ spec: SourceSpec; isDir: boolean }[]>([]); // session-only; no secret persistence
-  let destRecents = $state<{ spec: SourceSpec; isDir: boolean }[]>([]);
-  let originIsDir = $state<boolean | null>(null); // dir vs file, learned from the picker's connection test
+  let originRecents = $state<{ spec: SourceSpec; isDir: boolean; stale?: boolean }[]>([]);
+  let destRecents = $state<{ spec: SourceSpec; isDir: boolean; stale?: boolean }[]>([]);
+  let originIsDir = $state<boolean | null>(null);
   let destIsDir = $state<boolean | null>(null);
+  let originStale = $state(false);
+  let destStale = $state(false);
   let cancelConfirm = $state(false); // confirm leaving a comparison back to source selection
   let picking = $state<"origin" | "dest" | null>(null); // which side's modal is open
   let recentPrefill = $state<SourceSpec | null>(null); // a reused recent missing its secret → pre-fill the picker
@@ -255,7 +257,7 @@
   const canDelL = $derived(sel.length > 0 && sel.every((e) => e.left !== null));
   const canDelR = $derived(sel.length > 0 && sel.every((e) => e.right !== null));
 
-  // Fetch the source-type catalog + restore persisted sources from localStorage.
+  // Fetch the source-type catalog + restore persisted recents from ~/.cache/confold/recents.json.
   onMount(async () => {
     try {
       sourceTypes = await commands.sourceTypes();
@@ -263,17 +265,28 @@
       error = String(e);
     }
     try {
-      // Keep only well-formed `{ kind, fields }` specs — silently drops legacy-shape entries persisted
-      // by older builds (a pre-1.0 spec format change), so they can never crash the chips/slugOf.
-      const restore = (raw: string | null): { spec: SourceSpec; isDir: boolean }[] =>
-        raw
-          ? (JSON.parse(raw) as { spec: SourceSpec; isDir: boolean }[]).filter(
-              (r) => typeof r?.spec?.kind === "string" && r.spec.fields != null && typeof r.spec.fields === "object",
-            )
-          : [];
-      originRecents = restore(localStorage.getItem("confold-origin-recents"));
-      destRecents = restore(localStorage.getItem("confold-dest-recents"));
-    } catch { /* corrupt storage — ignore */ }
+      const data = await commands.loadRecents();
+      if (data.origins.length > 0 || data.destinations.length > 0) {
+        originRecents = data.origins;
+        destRecents = data.destinations;
+      } else {
+        const restore = (raw: string | null): { spec: SourceSpec; isDir: boolean }[] =>
+          raw
+            ? (JSON.parse(raw) as { spec: SourceSpec; isDir: boolean }[]).filter(
+                (r) => typeof r?.spec?.kind === "string" && r.spec.fields != null && typeof r.spec.fields === "object",
+              )
+            : [];
+        const oldO = restore(localStorage.getItem("confold-origin-recents"));
+        const oldD = restore(localStorage.getItem("confold-dest-recents"));
+        if (oldO.length > 0 || oldD.length > 0) {
+          originRecents = oldO;
+          destRecents = oldD;
+          persistRecents();
+          localStorage.removeItem("confold-origin-recents");
+          localStorage.removeItem("confold-dest-recents");
+        }
+      }
+    } catch { /* non-Tauri environment — recents unavailable */ }
   });
 
   // Streamed file verdicts from the backend. Ignore events from superseded comparisons (stale token).
@@ -328,7 +341,7 @@
     let unlisten: UnlistenFn | undefined;
     import("@tauri-apps/plugin-deep-link")
       .then(async ({ getCurrent, onOpenUrl }) => {
-        const handleUrls = (urls: string[]) => {
+        const handleUrls = async (urls: string[]) => {
           for (const raw of urls) {
             try {
               const url = new URL(raw);
@@ -336,13 +349,32 @@
               const o = url.searchParams.get("origin");
               const d = url.searchParams.get("destination");
               if (o && d) {
-                openedFile = null;
-                mode = "compare";
-                originSpec = { kind: "fs", fields: { root: o } };
-                destSpec = { kind: "fs", fields: { root: d } };
-                runCompare();
+                const oSpec: SourceSpec = { kind: "fs", fields: { root: o } };
+                const dSpec: SourceSpec = { kind: "fs", fields: { root: d } };
+                originSpec = oSpec;
+                destSpec = dSpec;
+                const [oExists, dExists] = await Promise.all([
+                  commands.pathExists(o).catch(() => false),
+                  commands.pathExists(d).catch(() => false),
+                ]);
+                originStale = !oExists;
+                destStale = !dExists;
+                if (oExists && dExists) {
+                  originRecents = prependRecent(originRecents, oSpec, true);
+                  destRecents = prependRecent(destRecents, dSpec, true);
+                  persistRecents();
+                  openedFile = null;
+                  mode = "compare";
+                  runCompare();
+                }
               } else if (o) {
-                originSpec = { kind: "fs", fields: { root: o } };
+                const oSpec: SourceSpec = { kind: "fs", fields: { root: o } };
+                originSpec = oSpec;
+                originStale = !(await commands.pathExists(o).catch(() => false));
+                if (!originStale) {
+                  originRecents = prependRecent(originRecents, oSpec, true);
+                  persistRecents();
+                }
               }
             } catch { /* malformed URL — ignore */ }
           }
@@ -392,45 +424,47 @@
     if (picking === "origin") {
       originSpec = spec;
       originIsDir = isDir;
-      originRecents = remember(originRecents, spec, isDir, "confold-origin-recents");
+      originStale = false;
+      originRecents = prependRecent(originRecents, spec, isDir);
     } else if (picking === "dest") {
       destSpec = spec;
       destIsDir = isDir;
-      destRecents = remember(destRecents, spec, isDir, "confold-dest-recents");
+      destStale = false;
+      destRecents = prependRecent(destRecents, spec, isDir);
     }
     picking = null;
     recentPrefill = null;
+    persistRecents();
   }
-  // Prepend to a recents list (deduped by slug, capped at 5), persist to localStorage, return the
-  // updated list. Per-side: origins under "origin", destinations under "dest" — work usually flows one
-  // direction, so keeping them apart avoids confusion.
-  function remember(
-    list: { spec: SourceSpec; isDir: boolean }[],
+  function prependRecent(
+    list: { spec: SourceSpec; isDir: boolean; stale?: boolean }[],
     spec: SourceSpec,
     isDir: boolean,
-    storageKey: string,
   ) {
     const slug = slugOf(spec).label;
-    const next = [{ spec, isDir }, ...list.filter((r) => slugOf(r.spec).label !== slug)].slice(0, 5);
-    // SECURITY: never write secret fields (SFTP password, S3 secret key) to disk. The in-memory list keeps
-    // full specs for this session; the persisted copy is stripped (re-entered via the picker after reload).
-    const persisted = next.map((r) => ({ spec: stripSecrets(r.spec, sourceTypes), isDir: r.isDir }));
-    localStorage.setItem(storageKey, JSON.stringify(persisted));
-    return next;
+    return [{ spec, isDir }, ...list.filter((r) => slugOf(r.spec).label !== slug)].slice(0, 5);
+  }
+  function persistRecents() {
+    const stripped = (list: typeof originRecents) =>
+      list.map((r) => ({ spec: stripSecrets(r.spec, sourceTypes), isDir: r.isDir }));
+    commands.saveRecents(stripped(originRecents), stripped(destRecents)).catch(() => {});
   }
 
   // Use a recent: if its (persisted, secret-stripped) spec is missing a required field — i.e. a credential
   // that we deliberately didn't store — re-open the picker pre-filled so the user re-enters just the secret;
   // otherwise apply it directly.
-  function pickRecent(r: { spec: SourceSpec; isDir: boolean }, side: "origin" | "dest") {
+  async function pickRecent(r: { spec: SourceSpec; isDir: boolean; stale?: boolean }, side: "origin" | "dest") {
     const info = sourceTypes.find((t) => t.id === r.spec.kind);
     if (info && missingRequired(info, r.spec.fields).length > 0) {
       recentPrefill = r.spec;
       picking = side;
       return;
     }
-    if (side === "origin") { originSpec = r.spec; originIsDir = r.isDir; }
-    else { destSpec = r.spec; destIsDir = r.isDir; }
+    const stale = r.spec.kind === "fs"
+      ? !(await commands.pathExists(r.spec.fields.root ?? "").catch(() => true))
+      : !!r.stale;
+    if (side === "origin") { originSpec = r.spec; originIsDir = r.isDir; originStale = stale; }
+    else { destSpec = r.spec; destIsDir = r.isDir; destStale = stale; }
   }
 
   // Split an absolute/remote path into [parent dir, filename] (handles `/` and `\`).
@@ -1419,7 +1453,7 @@
   <section class="sources">
     <div class="side">
       {#if originSpec}
-        <button class="chosen" type="button" onclick={() => (picking = "origin")}>
+        <button class="chosen" class:stale={originStale} type="button" onclick={() => { recentPrefill = originSpec; picking = "origin"; }}>
           <span class="ico">{slugOf(originSpec).icon}</span>
           <span class="slug">{slugOf(originSpec).label}</span>
           <span class="change">change</span>
@@ -1433,7 +1467,7 @@
         <div class="recents">
           <span class="rlabel">Recent sources:</span>
           {#each originRecents.filter((r) => !originSpec || slugOf(r.spec).label !== slugOf(originSpec).label) as r (slugOf(r.spec).label)}
-            <button class="recent" type="button" onclick={() => pickRecent(r, "origin")} title={slugOf(r.spec).label}>
+            <button class="recent" class:stale={r.stale} type="button" onclick={() => pickRecent(r, "origin")} title={slugOf(r.spec).label}>
               <span class="ico">{slugOf(r.spec).icon}</span><span class="rslug">{slugOf(r.spec).label}</span>
             </button>
           {/each}
@@ -1443,7 +1477,7 @@
 
     <div class="side">
       {#if destSpec}
-        <button class="chosen" type="button" onclick={() => (picking = "dest")}>
+        <button class="chosen" class:stale={destStale} type="button" onclick={() => { recentPrefill = destSpec; picking = "dest"; }}>
           <span class="ico">{slugOf(destSpec).icon}</span>
           <span class="slug">{slugOf(destSpec).label}</span>
           <span class="change">change</span>
@@ -1457,7 +1491,7 @@
         <div class="recents">
           <span class="rlabel">Recent destinations:</span>
           {#each destRecents.filter((r) => !destSpec || slugOf(r.spec).label !== slugOf(destSpec).label) as r (slugOf(r.spec).label)}
-            <button class="recent" type="button" onclick={() => pickRecent(r, "dest")} title={slugOf(r.spec).label}>
+            <button class="recent" class:stale={r.stale} type="button" onclick={() => pickRecent(r, "dest")} title={slugOf(r.spec).label}>
               <span class="ico">{slugOf(r.spec).icon}</span><span class="rslug">{slugOf(r.spec).label}</span>
             </button>
           {/each}
@@ -1965,6 +1999,10 @@
     text-align: left;
     overflow: hidden;
   }
+  .chosen.stale {
+    background: rgba(192, 57, 43, 0.1);
+    border-color: #c0392b;
+  }
   .chosen .ico {
     font-size: 1.2em;
     flex: none;
@@ -2010,6 +2048,10 @@
     padding: 0.2rem 0.6rem;
     font-size: 0.76rem;
     overflow: hidden;
+  }
+  .recent.stale {
+    color: #c0392b;
+    border-color: rgba(192, 57, 43, 0.4);
   }
   .recent .ico {
     flex: none;
@@ -2619,6 +2661,13 @@
     }
     .shell-msg {
       color: #6abf7a;
+    }
+    .recent.stale {
+      color: #e74c3c;
+    }
+    .chosen.stale {
+      background: rgba(231, 76, 60, 0.12);
+      border-color: #e74c3c;
     }
     .modal {
       background: #2a2a2a;

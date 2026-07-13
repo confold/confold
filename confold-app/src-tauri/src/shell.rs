@@ -24,7 +24,7 @@ pub(crate) struct ShellIntegrationStatus {
 
 const CACHE_DIR_NAME: &str = "confold";
 
-fn cache_dir() -> PathBuf {
+pub(crate) fn cache_dir() -> PathBuf {
     if cfg!(target_os = "windows") {
         PathBuf::from(std::env::var("LOCALAPPDATA").unwrap_or_else(|_| ".".into())).join(CACHE_DIR_NAME)
     } else {

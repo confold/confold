@@ -114,4 +114,14 @@ export const commands = {
   installShellIntegration: () => invoke<void>("install_shell_integration"),
   uninstallShellIntegration: () => invoke<void>("uninstall_shell_integration"),
   shellIntegrationStatus: () => invoke<{ installed: boolean }>("shell_integration_status"),
+
+  loadRecents: () => invoke<{
+    origins: { spec: SourceSpec; isDir: boolean; stale: boolean }[];
+    destinations: { spec: SourceSpec; isDir: boolean; stale: boolean }[];
+  }>("load_recents"),
+  saveRecents: (
+    origins: { spec: SourceSpec; isDir: boolean }[],
+    destinations: { spec: SourceSpec; isDir: boolean }[],
+  ) => invoke<void>("save_recents", { origins, destinations }),
+  pathExists: (path: string) => invoke<boolean>("path_exists", { path }),
 };
