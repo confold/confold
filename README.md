@@ -18,7 +18,7 @@ never waiting for a full scan, never loading what it doesn't need.
 
 ---
 
-> **v0.5.1 is out.** Install with your package manager (see [Install](#install)) or grab a build from the
+> **v0.6.0 is out.** Install with your package manager (see [Install](#install)) or grab a build from the
 > [latest release](https://github.com/confold/confold/releases/latest).
 
 ## Three modes, one engine
@@ -69,6 +69,22 @@ isn't verified identical, nothing is deleted. A partial move can never strand yo
 **Compare anything** — local, SFTP and S3 on the same engine:
 
 ![S3 compare](web/assets/shot-remote-s3.png)
+
+## Right-click to compare (macOS)
+
+Enable **Folder right-click integration** in the app, then:
+
+1. Right-click a folder in Finder → **Confold Select Origin**
+2. Right-click another folder → **Confold Compare**
+
+Confold launches with both folders loaded and the comparison running automatically.
+Menu items adapt dynamically — once you've selected an origin, the destination menu
+changes to "Compare" so you know the next step.
+
+Recently compared folders are remembered across restarts, and deleted paths are
+highlighted in red so you can fix them before comparing.
+
+> Linux and Windows shell integration are on the roadmap.
 
 ## Sources
 
