@@ -332,10 +332,10 @@
     .tt { background: #f0ece4; color: #1e1c18; border-color: #c8c2b8; box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
   }
   /* Responsive: hide date columns first (they're widest), then size columns. */
-  @media (max-width: 1200px) {
+  @container (max-width: 850px) {
     .dtcol { display: none; }
   }
-  @media (max-width: 900px) {
+  @container (max-width: 550px) {
     .szcol { display: none; }
   }
 

@@ -61,6 +61,8 @@
   let diff = $state(initial);
   let leftDirty = $state(false);
   let rightDirty = $state(false);
+  let eolLeft = $state<{ eol: string; finalNl: boolean } | null>(null);
+  let eolRight = $state<{ eol: string; finalNl: boolean } | null>(null);
   let busy = $state(false);
   let err = $state("");
 
@@ -76,6 +78,8 @@
     diff = $state.snapshot(pristine);
     leftDirty = false;
     rightDirty = false;
+    eolLeft = null;
+    eolRight = null;
     conflict = null;
     err = "";
   }
@@ -96,6 +100,50 @@
 
   const hunkByStart = $derived(new Map(computeHunks(diff).map((h) => [h.startRow, h])));
   const hasDiff = $derived(diff.rows.some((r) => r.kind !== "equal"));
+
+  function ws(text: string): string {
+    if (!showWs) return text;
+    return text.replace(/ /g, "·").replace(/\t/g, "→");
+  }
+  function effectiveMeta(side: "left" | "right") {
+    const override = side === "left" ? eolLeft : eolRight;
+    const meta = side === "left" ? leftMeta : rightMeta;
+    return {
+      eol: override?.eol ?? meta.eol,
+      finalNl: override?.finalNl ?? meta.final_nl,
+    };
+  }
+  const lastLeftNo = $derived.by(() => {
+    let m = 0;
+    for (const r of diff.rows) if (r.left_no != null && r.left_no > m) m = r.left_no;
+    return m;
+  });
+  const lastRightNo = $derived.by(() => {
+    let m = 0;
+    for (const r of diff.rows) if (r.right_no != null && r.right_no > m) m = r.right_no;
+    return m;
+  });
+  function eolMarkFor(side: "left" | "right", lineNo: number | null): string {
+    if (!showWs || lineNo == null) return "";
+    const m = effectiveMeta(side);
+    const isLast = lineNo === (side === "left" ? lastLeftNo : lastRightNo);
+    if (isLast && !m.finalNl) return "";
+    return m.eol === "\r\n" ? "␍⏎" : "⏎";
+  }
+  const detailIncludesLastLeft = $derived.by(() => {
+    if (!detailRange) return false;
+    for (let i = detailRange.end - 1; i >= detailRange.start; i--) {
+      if (i < diff.rows.length && diff.rows[i].left_no === lastLeftNo) return true;
+    }
+    return false;
+  });
+  const detailIncludesLastRight = $derived.by(() => {
+    if (!detailRange) return false;
+    for (let i = detailRange.end - 1; i >= detailRange.start; i--) {
+      if (i < diff.rows.length && diff.rows[i].right_no === lastRightNo) return true;
+    }
+    return false;
+  });
 
   // --- Fixed-height virtualization: only viewport rows hit the DOM (rows are single-line / no-wrap) ---
   const ROW_H = 20;
@@ -214,6 +262,7 @@
   //     plus a circular stepper over its edits. ---
   let showDetail = $state(true);
   let wordMode = $state(true); // highlight whole changed words (true) vs individual characters (false); top-bar toggle
+  let showWs = $state(false); // show whitespace markers (· space, → tab, ⏎ eol)
   let activeStopIdx = $state(0); // index of the active edit (0..stopCount-1) in the detail block
   let detailBodyEl: HTMLDivElement | undefined = $state();
 
@@ -299,11 +348,13 @@
       const right = [...cur.right];
       right.splice(h.rightBefore, h.rightLines.length, ...h.leftLines);
       rightDirty = true;
+      eolRight = { eol: leftMeta.eol, finalNl: leftMeta.final_nl };
       await rediff(cur.left, right);
     } else {
       const left = [...cur.left];
       left.splice(h.leftBefore, h.leftLines.length, ...h.rightLines);
       leftDirty = true;
+      eolLeft = { eol: rightMeta.eol, finalNl: rightMeta.final_nl };
       await rediff(left, cur.right);
     }
   }
@@ -315,9 +366,11 @@
     const cur = linesOf(diff);
     if (dir === "lr") {
       rightDirty = true;
+      eolRight = { eol: leftMeta.eol, finalNl: leftMeta.final_nl };
       await rediff(cur.left, [...cur.left]);
     } else {
       leftDirty = true;
+      eolLeft = { eol: rightMeta.eol, finalNl: rightMeta.final_nl };
       await rediff([...cur.right], cur.right);
     }
   }
@@ -399,11 +452,13 @@
       const right = [...cur.right];
       right.splice(rightStart, rightSeg.length, ...leftSeg);
       rightDirty = true;
+      eolRight = { eol: leftMeta.eol, finalNl: leftMeta.final_nl };
       await rediff(cur.left, right);
     } else {
       const left = [...cur.left];
       left.splice(leftStart, leftSeg.length, ...rightSeg);
       leftDirty = true;
+      eolLeft = { eol: rightMeta.eol, finalNl: rightMeta.final_nl };
       await rediff(left, cur.right);
     }
   }
@@ -417,7 +472,10 @@
     // byte-for-byte (no lost final `\n`, no silent CRLF→LF) — otherwise a "merged" side stays "different".
     const meta = side === "left" ? leftMeta : rightMeta;
     const lines = side === "left" ? cur.left : cur.right;
-    const contents = lines.join(meta.eol) + (meta.final_nl ? meta.eol : "");
+    const opts = side === "left" ? eolLeft : eolRight;
+    const eol = opts?.eol ?? meta.eol;
+    const finalNl = opts?.finalNl ?? meta.final_nl;
+    const contents = lines.join(eol) + (finalNl ? eol : "");
     const expect = side === "left" ? lfp : rfp;
     busy = true;
     err = "";
@@ -518,6 +576,7 @@
     <span class="nav-count" title="current change / total">{curClamped >= 0 ? `${curClamped + 1} / ${hunkStarts.length}` : "—"}</span>
     <button class="ghost nav" class:on={showDetail} title="toggle the line detail pane" onclick={() => (showDetail = !showDetail)}>⊟</button>
     <button class="ghost nav wc-toggle" class:on={wordMode} title="word- vs character-level diff" onclick={() => (wordMode = !wordMode)}>{wordMode ? "W" : "C"}</button>
+    <button class="ghost nav" class:on={showWs} title="show whitespace (· space, → tab)" onclick={() => (showWs = !showWs)}>¶</button>
   </span>
   {#if !readOnly}
   <span class="grp">
@@ -564,7 +623,7 @@
       <div class="srow kind-{v.row.kind}" style="top: {v.i * ROW_H}px" onclick={() => selectChangeAt(v.i)}>
         <div class="half left" data-row={v.i} data-side="left">
           <span class="ln">{v.row.left_no ?? ""}</span>
-          <code>{#each segments(v.row.left, ew.left) as seg}<span class:wc={seg.changed}>{seg.text}</span>{/each}</code>
+          <code>{#each segments(v.row.left, ew.left) as seg}<span class:wc={seg.changed}>{ws(seg.text)}</span>{/each}{#if showWs && v.row.left_no != null}<span class="eolm">{eolMarkFor("left", v.row.left_no)}</span>{/if}</code>
         </div>
         <div class="gutter">
           {#if hunkByStart.has(v.i) && !readOnly}
@@ -574,7 +633,7 @@
         </div>
         <div class="half right" data-row={v.i} data-side="right">
           <span class="ln">{v.row.right_no ?? ""}</span>
-          <code>{#each segments(v.row.right, ew.right) as seg}<span class:wc={seg.changed}>{seg.text}</span>{/each}</code>
+          <code>{#each segments(v.row.right, ew.right) as seg}<span class:wc={seg.changed}>{ws(seg.text)}</span>{/each}{#if showWs && v.row.right_no != null}<span class="eolm">{eolMarkFor("right", v.row.right_no)}</span>{/if}</code>
         </div>
       </div>
     {/each}
@@ -599,8 +658,11 @@
         {#each detailModel.groups as g, gi (gi)}
           <div class="dgroup" class:pair={g.length === 2}>
             {#each g as line, li (li)}
+              {@const side = line.sign === "-" ? "left" : "right"}
+              {@const isLastOfSign = !detailModel.groups.slice(gi + 1).some(sg => sg.some(sl => sl.sign === line.sign))}
+              {@const showEol = showWs && !(isLastOfSign && ((side === "left" && detailIncludesLastLeft && !effectiveMeta("left").finalNl) || (side === "right" && detailIncludesLastRight && !effectiveMeta("right").finalNl)))}
               <div class="dline {line.sign === '-' ? 'del' : 'ins'}">
-                <span class="sign">{line.sign}</span><code>{#each line.cells as c}<span class="dcell {c.cls}" class:active-wc={c.stop >= 0 && c.stop === activeStopIdx} data-stop={c.stop >= 0 ? c.stop : undefined}>{c.text}</span>{/each}</code>
+                <span class="sign">{line.sign}</span><code>{#each line.cells as c}<span class="dcell {c.cls}" class:active-wc={c.stop >= 0 && c.stop === activeStopIdx} data-stop={c.stop >= 0 ? c.stop : undefined}>{ws(c.text)}</span>{/each}{#if showEol}<span class="eolm">{effectiveMeta(side).eol === "\r\n" ? "␍⏎" : "⏎"}</span>{/if}</code>
               </div>
             {/each}
           </div>
@@ -902,6 +964,10 @@
   .wc {
     background: rgba(232, 163, 61, 0.45);
     border-radius: 2px;
+  }
+  .eolm {
+    opacity: 0.35;
+    font-size: 0.75em;
   }
   .gutter {
     display: flex;

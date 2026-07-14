@@ -1699,6 +1699,7 @@
       <button class="ghost" disabled={selectedCount === 0} onclick={clearSelection}>Clear</button>
     </div>
 
+    <div class="tree-wrap">
     <div class="thead">
       <span class="th-name">Name</span>
       <span class="th-sz">Source</span>
@@ -1726,6 +1727,7 @@
           {/each}
         </div>
       {/if}
+    </div>
     </div>
   {/if}
 
@@ -2500,6 +2502,13 @@
     font-size: 0.85rem;
     opacity: 0.7;
   }
+  .tree-wrap {
+    container-type: inline-size;
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
   .thead {
     display: flex;
     align-items: center;
@@ -2528,10 +2537,10 @@
     padding: 0.25rem 0.6em;
     border-left: 1px solid rgba(128, 128, 128, 0.18);
   }
-  @media (max-width: 1200px) {
+  @container (max-width: 850px) {
     .th-dt { display: none; }
   }
-  @media (max-width: 900px) {
+  @container (max-width: 550px) {
     .th-sz { display: none; }
   }
   .tree {
