@@ -24,19 +24,46 @@ echo "Bumping ${PREV_VERSION} → ${VERSION}"
 
 # ── Fetch digests from the GitHub release ─────────────────────────────────────
 echo "Fetching release digests for ${TAG} from ${REPO}..."
-ASSETS=$(gh release view "$TAG" --repo "$REPO" --json assets \
-  --jq '.assets[] | "\(.name) \(.digest)"')
+ASSETS=""
+for attempt in 1 2 3; do
+  ASSETS=$(gh release view "$TAG" --repo "$REPO" --json assets \
+    --jq '.assets[] | "\(.name) \(.digest)"' 2>/dev/null || true)
+  if [[ -n "$ASSETS" ]]; then
+    break
+  fi
+  echo "Attempt $attempt: release assets not yet visible, waiting 10s..."
+  sleep 10
+done
+
+if [[ -z "$ASSETS" ]]; then
+  echo "Error: could not fetch release assets after 3 attempts" >&2
+  exit 1
+fi
 
 extract() { echo "$ASSETS" | awk "/$1/ {print \$2}" | sed 's/^sha256://'; }
+
 SHA_MACOS_ARM=$(extract "Confold_${VERSION}_aarch64\\.dmg")
 SHA_MACOS_X86=$(extract "Confold_${VERSION}_x64\\.dmg")
 SHA_LINUX=$(extract     "Confold_${VERSION}_amd64\\.AppImage")
 SHA_WIN_NSIS=$(extract  "Confold_${VERSION}_x64-setup\\.exe")
 SHA_WIN_MSI=$(extract   "Confold_${VERSION}_x64_en-US\\.msi")
 
-[[ -z "$SHA_MACOS_ARM" || -z "$SHA_MACOS_X86" || -z "$SHA_LINUX" || -z "$SHA_WIN_NSIS" || -z "$SHA_WIN_MSI" ]] && {
-  echo "Error: could not find all five digests. Does the release have every bundle?" >&2
-  printf "%s\n" "$ASSETS" >&2; exit 1; }
+# Report missing digests explicitly
+MISSING=()
+[[ -z "$SHA_MACOS_ARM" ]] && MISSING+=("macOS arm64 (.dmg)")
+[[ -z "$SHA_MACOS_X86" ]] && MISSING+=("macOS x64 (.dmg)")
+[[ -z "$SHA_LINUX" ]] && MISSING+=("Linux (.AppImage)")
+[[ -z "$SHA_WIN_NSIS" ]] && MISSING+=("Windows NSIS (.exe)")
+[[ -z "$SHA_WIN_MSI" ]] && MISSING+=("Windows MSI (.msi)")
+
+if [[ ${#MISSING[@]} -gt 0 ]]; then
+  echo "Error: missing required release assets:" >&2
+  for m in "${MISSING[@]}"; do echo "  - $m" >&2; done
+  echo "" >&2
+  echo "Available assets:" >&2
+  printf "%s\n" "$ASSETS" >&2
+  exit 1
+fi
 
 SHA_WIN_NSIS_UP=$(echo "$SHA_WIN_NSIS" | tr '[:lower:]' '[:upper:]')
 SHA_WIN_MSI_UP=$(echo  "$SHA_WIN_MSI"  | tr '[:lower:]' '[:upper:]')
