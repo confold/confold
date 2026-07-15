@@ -141,8 +141,33 @@ echo ""
 echo "Done — all manifests at ${VERSION}."
 echo "Review: git diff dist/"
 echo ""
-printf "Publish (automated by .github/workflows/publish-*.yml on release publish):\n"
-printf "  brew:        dist/brew/{Casks,Formula}/confold.rb  →  github.com/confold/homebrew-confold\n"
-printf "  scoop:       dist/scoop/bucket/confold.json         →  github.com/confold/scoop-confold  bucket/\n"
-printf "  winget:      PR to microsoft/winget-pkgs with dist/winget/manifests/c/Confold/Confold/%s/\n" "$VERSION"
-printf "  chocolatey:  cd dist/chocolatey && choco pack && choco push\n"
+
+# ── Verify no stale version references remain ──────────────────────────────────
+echo "Verifying no stale version references remain..."
+STALE=$(grep -r "${PREV_VERSION}" \
+  --include="*.rs" --include="*.ts" --include="*.tsx" \
+  --include="*.toml" --include="*.json" --include="*.md" \
+  --include="*.html" --include="*.sh" --include="*.rb" \
+  --include="*.yml" --include="*.yaml" --include="*.txt" \
+  --include="*.yml" \
+  --exclude-dir=node_modules \
+  --exclude-dir=target \
+  --exclude-dir=dist \
+  --exclude-dir=.git \
+  --exclude-dir=.git \
+  . 2>/dev/null | grep -v "CHANGELOG" | grep -v "CHANGELOG.md" | grep -v "graphify-out" | grep -v "node_modules" | grep -v "target/" | grep -v "dist/" || true)
+
+if [[ -n "$STALE" ]]; then
+  echo "❌ ERROR: Stale version references found for ${PREV_VERSION}:" >&2
+  echo "$STALE" >&2
+  echo "" >&2
+  echo "Please update these references to ${VERSION} before releasing." >&2
+  exit 1
+else
+  echo "✅ No stale version references found."
+fi
+
+echo ""
+echo "Done — all manifests at ${VERSION}."
+echo "Review: git diff dist/"
+echo ""
