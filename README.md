@@ -193,8 +193,9 @@ confold semantic apply \
 ```
 
 Both review and apply re-read every input and reject a stale bundle. Binary files, invalid UTF-8,
-source code and structured configuration are outside protocol v1. The companion public agent skill is
-in [`skills/confold`](skills/confold).
+source code and structured configuration are outside protocol v1. Proposal JSON is strict and
+bounded, deterministic fast paths cannot be contradicted, and semantic proposals must account for
+both document variants. The companion public agent skill is in [`skills/confold`](skills/confold).
 
 Generate a ready-to-use three-way prose fixture alongside the normal demo trees:
 

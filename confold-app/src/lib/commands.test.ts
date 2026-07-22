@@ -85,4 +85,15 @@ describe("command bindings → invoke contract", () => {
     commands.testSource(SPEC);
     expect(last()).toEqual(["test_source", { spec: SPEC }]);
   });
+
+  it("shell integration commands use the exact Tauri command names", () => {
+    commands.installShellIntegration();
+    expect(last()).toEqual(["install_shell_integration"]);
+    commands.uninstallShellIntegration();
+    expect(last()).toEqual(["uninstall_shell_integration"]);
+    const status: Promise<{ supported: boolean; installed: boolean }> =
+      commands.shellIntegrationStatus();
+    void status;
+    expect(last()).toEqual(["shell_integration_status"]);
+  });
 });

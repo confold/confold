@@ -28,7 +28,8 @@ confold capabilities --format json
 ```
 
 Require semantic protocol version `1`. If the executable is missing or incompatible, explain the
-requirement and stop without writing.
+requirement and stop without writing. Honor the input, result, and protocol JSON byte limits reported by
+`capabilities`; do not truncate content to fit them.
 
 ### 2. Resolve the inputs
 
@@ -61,6 +62,9 @@ Omit `--base` for a two-way comparison. Read the resulting bundle and honor its 
   rewriting its content.
 - `needs_semantic_analysis`: continue with structural and intent analysis.
 
+If writing a proposal for a deterministic fast path, use its corresponding verdict. `uncertain` is
+the only safe alternative when the fast path cannot be accepted.
+
 ### 4. Analyze meaning
 
 For each input:
@@ -87,6 +91,8 @@ Read [the protocol reference](references/protocol.md) when constructing the JSON
 - Use `uncertain` with no result whenever unresolved meaning remains.
 
 Write the proposal to `TEMP_DIR/proposal.json`. Do not write merged prose anywhere else yet.
+Include every schema field exactly as documented; Confold rejects missing and unknown fields. For
+`needs_semantic_analysis`, include at least one material contribution from both `left` and `right`.
 
 ### 6. Review deterministically
 

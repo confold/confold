@@ -17,6 +17,8 @@ use thiserror::Error;
 
 pub const SCHEMA_VERSION: u32 = 1;
 pub const MAX_INPUT_BYTES: u64 = 2_000_000;
+pub const MAX_RESULT_BYTES: u64 = MAX_INPUT_BYTES * 3;
+pub const MAX_PROTOCOL_JSON_BYTES: u64 = MAX_RESULT_BYTES * 6 + 1_000_000;
 pub const SUPPORTED_EXTENSIONS: &[&str] = &["md", "markdown", "txt", "rst", "adoc", "asciidoc"];
 
 #[derive(Debug, Error)]
@@ -53,6 +55,12 @@ pub enum SemanticError {
     ParseJson {
         path: PathBuf,
         source: serde_json::Error,
+    },
+    #[error("protocol JSON exceeds the {limit}-byte limit: {path} ({actual} bytes)")]
+    ProtocolJsonTooLarge {
+        path: PathBuf,
+        actual: u64,
+        limit: u64,
     },
     #[error("failed to serialize JSON: {0}")]
     SerializeJson(serde_json::Error),
@@ -92,6 +100,7 @@ pub enum EolStyle {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct InputSnapshot {
     pub role: InputRole,
     pub path: PathBuf,
@@ -113,6 +122,7 @@ pub enum FastPath {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SemanticBundle {
     pub schema_version: u32,
     pub operation_id: String,
@@ -142,6 +152,7 @@ pub enum Disposition {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Contribution {
     pub source: InputRole,
     pub intent: String,
@@ -149,14 +160,13 @@ pub struct Contribution {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SemanticProposal {
     pub schema_version: u32,
     pub operation_id: String,
     pub verdict: Verdict,
     pub summary: String,
-    #[serde(default)]
     pub contributions: Vec<Contribution>,
-    #[serde(default)]
     pub warnings: Vec<String>,
     pub result: Option<String>,
 }
@@ -303,6 +313,13 @@ fn snapshot(role: InputRole, path: &Path) -> Result<InputSnapshot, SemanticError
         path: canonical.clone(),
         source,
     })?;
+    if bytes.len() as u64 > MAX_INPUT_BYTES {
+        return Err(SemanticError::TooLarge {
+            path: canonical,
+            actual: bytes.len() as u64,
+            limit: MAX_INPUT_BYTES,
+        });
+    }
     if bytes.contains(&0) {
         return Err(SemanticError::Binary(canonical));
     }
@@ -397,6 +414,29 @@ fn validate(bundle: &SemanticBundle, proposal: &SemanticProposal) -> Result<(), 
         }
         _ => {}
     }
+    let expected_fast_path_verdict = match bundle.fast_path {
+        FastPath::ByteIdentical | FastPath::FormattingOnly => Some(Verdict::Equivalent),
+        FastPath::PreferLeft => Some(Verdict::PreferLeft),
+        FastPath::PreferRight => Some(Verdict::PreferRight),
+        FastPath::NeedsSemanticAnalysis => None,
+    };
+    if let Some(expected) = expected_fast_path_verdict {
+        if proposal.verdict != expected && proposal.verdict != Verdict::Uncertain {
+            return Err(SemanticError::InvalidProposal(format!(
+                "fast path {:?} requires {:?} or Uncertain, got {:?}",
+                bundle.fast_path, expected, proposal.verdict
+            )));
+        }
+    }
+    if proposal
+        .result
+        .as_ref()
+        .is_some_and(|result| result.len() as u64 > MAX_RESULT_BYTES)
+    {
+        return Err(SemanticError::InvalidProposal(format!(
+            "merged result exceeds the {MAX_RESULT_BYTES}-byte semantic limit"
+        )));
+    }
     let roles: HashSet<InputRole> = bundle.inputs.iter().map(|input| input.role).collect();
     for contribution in &proposal.contributions {
         if !roles.contains(&contribution.source) {
@@ -409,6 +449,19 @@ fn validate(bundle: &SemanticBundle, proposal: &SemanticProposal) -> Result<(), 
             return Err(SemanticError::InvalidProposal(
                 "contribution intent must not be empty".into(),
             ));
+        }
+    }
+    if bundle.fast_path == FastPath::NeedsSemanticAnalysis {
+        for required in [InputRole::Left, InputRole::Right] {
+            if !proposal
+                .contributions
+                .iter()
+                .any(|contribution| contribution.source == required)
+            {
+                return Err(SemanticError::InvalidProposal(format!(
+                    "semantic analysis requires a contribution for {required:?}"
+                )));
+            }
         }
     }
     Ok(())
@@ -600,10 +653,28 @@ fn write_new_atomic(path: &Path, bytes: &[u8]) -> Result<(), SemanticError> {
 }
 
 fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T, SemanticError> {
+    let metadata = fs::metadata(path).map_err(|source| SemanticError::Read {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    if metadata.len() > MAX_PROTOCOL_JSON_BYTES {
+        return Err(SemanticError::ProtocolJsonTooLarge {
+            path: path.to_path_buf(),
+            actual: metadata.len(),
+            limit: MAX_PROTOCOL_JSON_BYTES,
+        });
+    }
     let bytes = fs::read(path).map_err(|source| SemanticError::Read {
         path: path.to_path_buf(),
         source,
     })?;
+    if bytes.len() as u64 > MAX_PROTOCOL_JSON_BYTES {
+        return Err(SemanticError::ProtocolJsonTooLarge {
+            path: path.to_path_buf(),
+            actual: bytes.len() as u64,
+            limit: MAX_PROTOCOL_JSON_BYTES,
+        });
+    }
     serde_json::from_slice(&bytes).map_err(|source| SemanticError::ParseJson {
         path: path.to_path_buf(),
         source,
@@ -706,7 +777,18 @@ mod tests {
             operation_id: bundle.operation_id.clone(),
             verdict,
             summary: "Reviewed both documents".into(),
-            contributions: vec![],
+            contributions: vec![
+                Contribution {
+                    source: InputRole::Left,
+                    intent: "Account for the left document".into(),
+                    disposition: Disposition::Preserved,
+                },
+                Contribution {
+                    source: InputRole::Right,
+                    intent: "Account for the right document".into(),
+                    disposition: Disposition::Preserved,
+                },
+            ],
             warnings: vec![],
             result: result.map(str::to_string),
         }
@@ -759,6 +841,168 @@ mod tests {
         assert!(matches!(
             prepare(&text, &json, None),
             Err(SemanticError::UnsupportedExtension { .. })
+        ));
+    }
+
+    #[test]
+    fn prepare_rejects_oversized_and_invalid_utf8_inputs() {
+        let dir = tempfile::tempdir().unwrap();
+        let valid = dir.path().join("valid.md");
+        let oversized = dir.path().join("oversized.md");
+        let invalid_utf8 = dir.path().join("invalid-utf8.md");
+        write(&valid, b"valid");
+        write(&oversized, &vec![b'x'; MAX_INPUT_BYTES as usize + 1]);
+        write(&invalid_utf8, &[0xff, 0xfe]);
+
+        assert!(matches!(
+            prepare(&valid, &oversized, None),
+            Err(SemanticError::TooLarge {
+                actual,
+                limit: MAX_INPUT_BYTES,
+                ..
+            }) if actual == MAX_INPUT_BYTES + 1
+        ));
+        assert!(matches!(
+            prepare(&valid, &invalid_utf8, None),
+            Err(SemanticError::InvalidUtf8(_))
+        ));
+    }
+
+    #[test]
+    fn snapshots_preserve_eol_style_and_final_newline_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let cases = [
+            ("none.md", b"one line".as_slice(), EolStyle::None, false),
+            ("lf.md", b"one\ntwo\n".as_slice(), EolStyle::Lf, true),
+            (
+                "crlf.md",
+                b"one\r\ntwo\r\n".as_slice(),
+                EolStyle::Crlf,
+                true,
+            ),
+            ("cr.md", b"one\rtwo\r".as_slice(), EolStyle::Cr, true),
+            (
+                "mixed.md",
+                b"one\r\ntwo\nthree".as_slice(),
+                EolStyle::Mixed,
+                false,
+            ),
+        ];
+
+        for (name, content, expected_eol, expected_final_newline) in cases {
+            let path = dir.path().join(name);
+            write(&path, content);
+            let input = snapshot(InputRole::Left, &path).unwrap();
+            assert_eq!(input.eol, expected_eol, "unexpected EOL style for {name}");
+            assert_eq!(
+                input.final_newline, expected_final_newline,
+                "unexpected final-newline metadata for {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn proposal_json_rejects_unknown_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let left = dir.path().join("left.md");
+        let right = dir.path().join("right.md");
+        let proposal_path = dir.path().join("proposal.json");
+        write(&left, b"left");
+        write(&right, b"right");
+        let bundle = prepare(&left, &right, None).unwrap();
+        let proposal = proposal(&bundle, Verdict::Uncertain, None);
+        let mut json = serde_json::to_value(proposal).unwrap();
+        json.as_object_mut()
+            .unwrap()
+            .insert("contributons".into(), serde_json::json!([]));
+        write(
+            &proposal_path,
+            serde_json::to_string_pretty(&json).unwrap().as_bytes(),
+        );
+
+        assert!(matches!(
+            read_proposal(&proposal_path),
+            Err(SemanticError::ParseJson { .. })
+        ));
+    }
+
+    #[test]
+    fn protocol_json_reads_are_bounded_before_parsing() {
+        let dir = tempfile::tempdir().unwrap();
+        let proposal_path = dir.path().join("oversized-proposal.json");
+        let file = fs::File::create(&proposal_path).unwrap();
+        file.set_len(MAX_PROTOCOL_JSON_BYTES + 1).unwrap();
+
+        let error = read_proposal(&proposal_path).unwrap_err();
+        assert!(
+            error.to_string().contains("protocol JSON exceeds"),
+            "unexpected error: {error}"
+        );
+    }
+
+    #[test]
+    fn fast_path_rejects_a_contradictory_verdict() {
+        let dir = tempfile::tempdir().unwrap();
+        let left = dir.path().join("left.md");
+        let right = dir.path().join("right.md");
+        let base = dir.path().join("base.md");
+        write(&left, b"original\n");
+        write(&base, b"original\n");
+        write(&right, b"updated\n");
+        let bundle = prepare(&left, &right, Some(&base)).unwrap();
+        assert_eq!(bundle.fast_path, FastPath::PreferRight);
+        let proposal = proposal(&bundle, Verdict::PreferLeft, None);
+
+        assert!(matches!(
+            review(&bundle, &proposal),
+            Err(SemanticError::InvalidProposal(_))
+        ));
+    }
+
+    #[test]
+    fn semantic_analysis_requires_left_and_right_contributions() {
+        let dir = tempfile::tempdir().unwrap();
+        let left = dir.path().join("left.md");
+        let right = dir.path().join("right.md");
+        write(&left, b"left intent\n");
+        write(&right, b"right intent\n");
+        let bundle = prepare(&left, &right, None).unwrap();
+        assert_eq!(bundle.fast_path, FastPath::NeedsSemanticAnalysis);
+        let mut proposal = proposal(&bundle, Verdict::Merged, Some("both intents\n"));
+        proposal.contributions.clear();
+
+        assert!(matches!(
+            review(&bundle, &proposal),
+            Err(SemanticError::InvalidProposal(_))
+        ));
+    }
+
+    #[test]
+    fn merged_result_rejects_output_larger_than_all_bounded_inputs() {
+        let dir = tempfile::tempdir().unwrap();
+        let left = dir.path().join("left.md");
+        let right = dir.path().join("right.md");
+        write(&left, b"left intent\n");
+        write(&right, b"right intent\n");
+        let bundle = prepare(&left, &right, None).unwrap();
+        let oversized = "x".repeat(MAX_INPUT_BYTES as usize * 3 + 1);
+        let mut proposal = proposal(&bundle, Verdict::Merged, Some(&oversized));
+        proposal.contributions = vec![
+            Contribution {
+                source: InputRole::Left,
+                intent: "Preserve the left intent".into(),
+                disposition: Disposition::Preserved,
+            },
+            Contribution {
+                source: InputRole::Right,
+                intent: "Preserve the right intent".into(),
+                disposition: Disposition::Preserved,
+            },
+        ];
+
+        assert!(matches!(
+            review(&bundle, &proposal),
+            Err(SemanticError::InvalidProposal(_))
         ));
     }
 

@@ -122,6 +122,14 @@ fn capabilities_reports_semantic_protocol() {
         .clone();
     let value: serde_json::Value = serde_json::from_slice(&output).expect("valid JSON");
     assert_eq!(value["semantic_protocol_versions"], serde_json::json!([1]));
+    assert_eq!(
+        value["semantic_max_result_bytes"],
+        serde_json::json!(6_000_000)
+    );
+    assert_eq!(
+        value["semantic_max_protocol_json_bytes"],
+        serde_json::json!(37_000_000)
+    );
     assert!(value["commands"]
         .as_array()
         .unwrap()
@@ -244,7 +252,10 @@ fn semantic_apply_rejects_stale_input_and_existing_output() {
             "operation_id": bundle_json["operation_id"],
             "verdict": "prefer_left",
             "summary": "Left is authoritative",
-            "contributions": [],
+            "contributions": [
+                {"source": "left", "intent": "Keep the left document", "disposition": "preserved"},
+                {"source": "right", "intent": "The right document is superseded", "disposition": "superseded"}
+            ],
             "warnings": [],
             "result": null
         }))

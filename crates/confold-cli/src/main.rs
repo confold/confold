@@ -10,8 +10,8 @@ use confold_core::{
 };
 use confold_semantic::{
     apply as semantic_apply, prepare as semantic_prepare, read_bundle, read_proposal,
-    review as semantic_review, write_json_new, MAX_INPUT_BYTES, SCHEMA_VERSION,
-    SUPPORTED_EXTENSIONS,
+    review as semantic_review, write_json_new, MAX_INPUT_BYTES, MAX_PROTOCOL_JSON_BYTES,
+    MAX_RESULT_BYTES, SCHEMA_VERSION, SUPPORTED_EXTENSIONS,
 };
 
 /// Confold: cross-platform folder compare.
@@ -175,6 +175,8 @@ fn run_capabilities(args: CapabilitiesArgs) -> anyhow::Result<ExitCode> {
         "cli_version": env!("CARGO_PKG_VERSION"),
         "semantic_protocol_versions": [SCHEMA_VERSION],
         "semantic_max_input_bytes": MAX_INPUT_BYTES,
+        "semantic_max_result_bytes": MAX_RESULT_BYTES,
+        "semantic_max_protocol_json_bytes": MAX_PROTOCOL_JSON_BYTES,
         "semantic_extensions": SUPPORTED_EXTENSIONS,
         "commands": [
             "capabilities",
@@ -190,6 +192,8 @@ fn run_capabilities(args: CapabilitiesArgs) -> anyhow::Result<ExitCode> {
             println!("Confold CLI {}", env!("CARGO_PKG_VERSION"));
             println!("Semantic protocol: v{SCHEMA_VERSION}");
             println!("Semantic input limit: {MAX_INPUT_BYTES} bytes per file");
+            println!("Semantic result limit: {MAX_RESULT_BYTES} bytes");
+            println!("Semantic protocol JSON limit: {MAX_PROTOCOL_JSON_BYTES} bytes");
             println!("Semantic extensions: {}", SUPPORTED_EXTENSIONS.join(", "));
         }
     }

@@ -13,16 +13,41 @@
 #[allow(unused_imports)]
 use tauri::State;
 #[allow(unused_imports)]
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::scan::AppState;
 
 #[derive(serde::Serialize)]
 pub(crate) struct ShellIntegrationStatus {
+    pub(crate) supported: bool,
     pub(crate) installed: bool,
 }
 
 const CACHE_DIR_NAME: &str = "confold";
+
+fn shell_integration_supported(target_os: &str) -> bool {
+    matches!(target_os, "macos" | "linux")
+}
+
+fn ensure_shell_integration_supported(target_os: &str) -> Result<(), String> {
+    if shell_integration_supported(target_os) {
+        Ok(())
+    } else {
+        Err(format!(
+            "folder right-click integration is not supported on {target_os}"
+        ))
+    }
+}
+
+fn has_confold_workflow(services: &Path) -> bool {
+    std::fs::read_dir(services).is_ok_and(|entries| {
+        entries.flatten().any(|entry| {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            name.starts_with("Confold") && name.ends_with(".workflow") && entry.path().is_dir()
+        })
+    })
+}
 
 pub(crate) fn cache_dir() -> PathBuf {
     if cfg!(target_os = "windows") {
@@ -397,6 +422,7 @@ fn refresh_services() {
 
 #[tauri::command]
 pub(crate) fn install_shell_integration(_state: State<AppState>) -> Result<(), String> {
+    ensure_shell_integration_supported(std::env::consts::OS)?;
     std::fs::create_dir_all(cache_dir()).map_err(|e| e.to_string())?;
 
     #[cfg(target_os = "macos")]
@@ -434,6 +460,7 @@ pub(crate) fn install_shell_integration(_state: State<AppState>) -> Result<(), S
 
 #[tauri::command]
 pub(crate) fn uninstall_shell_integration(_state: State<AppState>) -> Result<(), String> {
+    ensure_shell_integration_supported(std::env::consts::OS)?;
     #[cfg(target_os = "macos")]
     {
         remove_all_confold_workflows();
@@ -463,10 +490,8 @@ pub(crate) fn uninstall_shell_integration(_state: State<AppState>) -> Result<(),
 pub(crate) fn shell_integration_status(_state: State<AppState>) -> ShellIntegrationStatus {
     #[cfg(target_os = "macos")]
     {
-        let installed = cache_dir()
-            .join("workflows/origin.workflow/Contents/document.wflow")
-            .exists();
-        ShellIntegrationStatus { installed }
+        let installed = has_confold_workflow(&services_path());
+        ShellIntegrationStatus { supported: true, installed }
     }
 
     #[cfg(target_os = "linux")]
@@ -475,11 +500,36 @@ pub(crate) fn shell_integration_status(_state: State<AppState>) -> ShellIntegrat
         let installed = PathBuf::from(&home)
             .join(".local/share/applications/confold-compare.desktop")
             .exists();
-        ShellIntegrationStatus { installed }
+        ShellIntegrationStatus { supported: true, installed }
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
-        ShellIntegrationStatus { installed: false }
+        ShellIntegrationStatus { supported: false, installed: false }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shell_integration_support_is_explicit_per_platform() {
+        assert!(shell_integration_supported("macos"));
+        assert!(shell_integration_supported("linux"));
+        assert!(!shell_integration_supported("windows"));
+        assert!(ensure_shell_integration_supported("windows")
+            .unwrap_err()
+            .contains("not supported"));
+    }
+
+    #[test]
+    fn installed_status_requires_an_actual_confold_workflow() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!has_confold_workflow(dir.path()));
+        std::fs::create_dir(dir.path().join("Other.workflow")).unwrap();
+        assert!(!has_confold_workflow(dir.path()));
+        std::fs::create_dir(dir.path().join("Confold Select Origin.workflow")).unwrap();
+        assert!(has_confold_workflow(dir.path()));
     }
 }

@@ -21,6 +21,10 @@ confold semantic apply \
 
 Every created path must be new. Confold never overwrites a bundle or merged output.
 
+Use `capabilities` as the source of truth for `semantic_max_input_bytes` and
+`semantic_max_result_bytes`, and `semantic_max_protocol_json_bytes`. Protocol JSON is strict and
+bounded: every documented field is required and unknown fields are rejected.
+
 ## Proposal schema
 
 ```json
@@ -52,6 +56,20 @@ Verdict rules:
 | `uncertain` | `null` | no |
 
 Do not include result text for any verdict except `merged`.
+
+For `needs_semantic_analysis`, `contributions` must account for both `left` and `right` with at least
+one entry from each source. A base contribution remains optional. A merged result must not exceed
+`semantic_max_result_bytes`.
+
+Fast-path verdicts are enforced:
+
+| Bundle `fast_path` | Accepted proposal verdict |
+|---|---|
+| `byte_identical` | `equivalent` or `uncertain` |
+| `formatting_only` | `equivalent` or `uncertain` |
+| `prefer_left` | `prefer_left` or `uncertain` |
+| `prefer_right` | `prefer_right` or `uncertain` |
+| `needs_semantic_analysis` | any schema-valid verdict with required contributions |
 
 ## Bundle facts
 

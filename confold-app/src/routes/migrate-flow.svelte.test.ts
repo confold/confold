@@ -27,6 +27,8 @@ const { invokeMock, listenMock, PLAN, ctx } = vi.hoisted(() => {
     switch (cmd) {
       case "source_types":
         return Promise.resolve([]);
+      case "load_recents":
+        return Promise.resolve({ origins: [], destinations: [] });
       case "migrate_actions": {
         // The backend no longer returns the plan; it streams it via a `plan-ready` event tagged with the
         // token it was given. Echo the captured plan back through that listener (matching the token).

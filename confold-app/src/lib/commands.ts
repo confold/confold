@@ -113,7 +113,8 @@ export const commands = {
 
   installShellIntegration: () => invoke<void>("install_shell_integration"),
   uninstallShellIntegration: () => invoke<void>("uninstall_shell_integration"),
-  shellIntegrationStatus: () => invoke<{ installed: boolean }>("shell_integration_status"),
+  shellIntegrationStatus: () =>
+    invoke<{ supported: boolean; installed: boolean }>("shell_integration_status"),
 
   loadRecents: () => invoke<{
     origins: { spec: SourceSpec; isDir: boolean; stale: boolean }[];
