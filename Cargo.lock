@@ -447,12 +447,13 @@ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
 name = "confold-cli"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
  "clap",
  "confold-core",
+ "confold-semantic",
  "confold-vfs",
  "predicates",
  "serde_json",
@@ -461,7 +462,7 @@ dependencies = [
 
 [[package]]
 name = "confold-core"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "confold-vfs",
  "criterion",
@@ -475,8 +476,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "confold-semantic"
+version = "0.6.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+ "similar",
+ "tempfile",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "confold-sftp"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "confold-vfs",
@@ -489,7 +502,7 @@ dependencies = [
 
 [[package]]
 name = "confold-sync"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "confold-core",
  "confold-vfs",
@@ -499,7 +512,7 @@ dependencies = [
 
 [[package]]
 name = "confold-textdiff"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "serde",
  "similar",
@@ -507,7 +520,7 @@ dependencies = [
 
 [[package]]
 name = "confold-vfs"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "memmap2",
  "serde",
@@ -1025,9 +1038,9 @@ dependencies = [
 
 [[package]]
 name = "generic-array"
-version = "0.14.9"
+version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4bb6743198531e02858aeaea5398fcc883e71851fcbcb5a2f773e2fb6cb1edf2"
+checksum = "85649ca51fd72272d7821adaf274ad91c288277713d9c18820d8499a7ff69e9a"
 dependencies = [
  "typenum",
  "version_check",
@@ -1039,7 +1052,7 @@ version = "1.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2e55f16dcf0e9c00efbe2e655ffe45fc98e7066b52bc92f8a79e64060a79351"
 dependencies = [
- "generic-array 0.14.9",
+ "generic-array 0.14.7",
  "rustversion",
  "typenum",
 ]
@@ -2360,7 +2373,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.2",
  "once_cell",
  "rustix",
  "windows-sys",

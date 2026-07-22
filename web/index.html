@@ -238,6 +238,28 @@
       </div>
     </section>
 
+    <section class="alt">
+      <div class="wrap">
+        <h2>Reconcile documents by meaning, with guardrails</h2>
+        <p class="lead">Available today through the Confold CLI and public agent skill: combine diverged
+          Markdown or plain-text documents without giving the model unchecked write access.</p>
+        <div class="grid2">
+          <div class="card">
+            <h3>🧠 Bring the agent you already use</h3>
+            <p>Confold does not call or configure an LLM. A compatible agent runtime supplies the model
+              and proposes the semantic result, so the protocol stays provider-neutral.</p>
+          </div>
+          <div class="card">
+            <h3>🔒 Review before anything is written</h3>
+            <p>Confold fingerprints every input, rejects stale analysis, validates the proposal and shows
+              deterministic diffs. Apply creates a new file and never overwrites an input.</p>
+          </div>
+        </div>
+        <p class="note">The guided desktop workflow and in-app agent/provider settings are on the roadmap.
+          Installing the desktop app alone does not yet expose semantic reconciliation.</p>
+      </div>
+    </section>
+
     <section class="shots" id="screenshots">
       <div class="wrap">
         <h2>See it in action</h2>
@@ -358,7 +380,8 @@
         <h2>Roadmap</h2>
         <ul class="road">
           <li><strong>More sources</strong> — SMB, NFS, WebDAV and cloud drives, on the same engine.</li>
-          <li><strong>AI-assisted semantic reconciliation</strong> — resolve conflicts by meaning, not just bytes.</li>
+          <li><strong>Semantic reconciliation in the desktop app</strong> — the CLI + public agent skill
+            are available in source today; next, bring the validated workflow into the GUI and Sync conflicts.</li>
           <li><strong>Signed &amp; notarized builds</strong> — code-signing for macOS and Windows to drop the install-time security prompts.</li>
           <li><strong>Confold Cloud</strong> — a hosted "reconcile and sync across sources, from one place" service.</li>
         </ul>

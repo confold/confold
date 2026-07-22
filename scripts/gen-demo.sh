@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Generate a synthetic demo pair of folder trees for exercising `confold compare`.
-# Doubles as demo data for the GUI. Re-runnable; writes nothing outside <target-dir>.
+# Generate synthetic folder trees and prose variants for exercising Confold.
+# Doubles as demo data for the GUI and semantic CLI. Re-runnable; writes nothing outside <target-dir>.
 #
 # Usage: scripts/gen-demo.sh <target-dir> [count] [big-lines]
 #   <target-dir>  creates <target-dir>/origin and <target-dir>/destination
@@ -8,6 +8,8 @@
 #                 tree / virtualization (e.g. 50 = small, 5000 = large).
 #   [big-lines]   optional line count for a large TEXT file pair (text/large.txt, default 0 = none) to
 #                 exercise the side-by-side virtualization — open it by double-clicking it in the tree.
+#
+# Semantic fixtures are always written to <target-dir>/semantic/{base,left,right}.md.
 set -euo pipefail
 
 root="${1:?usage: gen-demo.sh <target-dir> [count] [big-lines]}"
@@ -221,6 +223,73 @@ EOF
 
 echo "  + text/ : config.json, app.py, release-notes.md, data.csv, whitespace.js, longline.js, wide.csv, urls.json (rich diffs)"
 
+# 10i. Prose variants for the semantic protocol. The variants deliberately reorganize the same base
+#      intent while adding complementary safety requirements on each side. A good merge preserves the
+#      left-side audit trail, the right-side stale-plan and no-overwrite gates, and the shared rollback.
+S="$root/semantic"
+mkdir -p "$S"
+cat <<'EOF' >"$S/base.md"
+# Release Process
+
+## Goal
+
+Publish a release safely and make recovery straightforward.
+
+## Workflow
+
+1. Build and sign the release artifacts.
+2. Let the release manager review the proposed changes.
+3. Publish only after explicit approval.
+
+## Recovery
+
+Keep the previous release available so it can be restored if validation fails.
+EOF
+cat <<'EOF' >"$S/left.md"
+# Safe Release Procedure
+
+## Objective
+
+Ship a verified release while retaining enough evidence to audit the decision later.
+
+## Preparation
+
+- Build and sign every artifact.
+- Record the artifact SHA-256 values in the release record.
+
+## Approval and audit
+
+The release manager reviews the proposed changes and gives explicit approval before publication.
+Store the approver, timestamp, artifact checksums, and final release identifier in the audit log.
+
+## Rollback
+
+Retain the previous release and its checksums so operators can restore it if validation fails.
+EOF
+cat <<'EOF' >"$S/right.md"
+# Release Validation and Publication
+
+## Purpose
+
+Publish only a reviewed release produced from inputs that have not changed during validation.
+
+## Validation gates
+
+1. Build and sign the release artifacts.
+2. Reject the plan if any source input changed after preparation.
+3. Show the complete deterministic diff to the release manager.
+
+## Publication
+
+Publish only after the release manager explicitly approves the reviewed diff. Create a new release
+output; never overwrite an existing artifact or the previous release.
+
+## Recovery
+
+Keep the previous release available and restore it if post-publication validation fails.
+EOF
+echo "  + semantic/ : base.md, left.md, right.md (three-way prose merge)"
+
 # 10i. Image pairs (24-bit BMP, no deps) for the image comparator. Variants exercise every mode:
 #      base = colourful gradient; multi = 3 separate coloured blocks (→ region nav); subtle = faint +18
 #      tint in a band (→ tolerance slider).
@@ -351,3 +420,4 @@ fi
 echo "demo trees created:"
 echo "  origin     : $O"
 echo "  destination: $D"
+echo "  semantic   : $S"

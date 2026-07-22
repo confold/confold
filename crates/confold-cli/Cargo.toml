@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 confold-core.workspace = true
+confold-semantic.workspace = true
 confold-vfs.workspace = true
 clap.workspace = true
 serde_json.workspace = true

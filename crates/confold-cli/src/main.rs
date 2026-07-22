@@ -8,6 +8,11 @@ use clap::{Parser, Subcommand, ValueEnum};
 use confold_core::{
     compare, CompareConfig, CompareMethod, FilterSet, LocalSource, DEFAULT_LARGE_FILE_THRESHOLD,
 };
+use confold_semantic::{
+    apply as semantic_apply, prepare as semantic_prepare, read_bundle, read_proposal,
+    review as semantic_review, write_json_new, MAX_INPUT_BYTES, SCHEMA_VERSION,
+    SUPPORTED_EXTENSIONS,
+};
 
 /// Confold: cross-platform folder compare.
 #[derive(Parser)]
@@ -19,8 +24,80 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Report machine-readable CLI and protocol capabilities.
+    Capabilities(CapabilitiesArgs),
     /// Compare two directory trees.
     Compare(CompareArgs),
+    /// Prepare, review, and apply AI-assisted semantic document proposals.
+    Semantic(SemanticArgs),
+}
+
+#[derive(Parser)]
+struct CapabilitiesArgs {
+    /// Output format.
+    #[arg(long, value_enum, default_value_t = FormatArg::Text)]
+    format: FormatArg,
+}
+
+#[derive(Parser)]
+struct SemanticArgs {
+    #[command(subcommand)]
+    command: SemanticCommand,
+}
+
+#[derive(Subcommand)]
+enum SemanticCommand {
+    /// Capture bounded immutable text inputs in a semantic bundle.
+    Prepare(SemanticPrepareArgs),
+    /// Validate a semantic proposal and display its deterministic result diff.
+    Review(SemanticReviewArgs),
+    /// Revalidate and atomically write a proposal to a new output file.
+    Apply(SemanticApplyArgs),
+}
+
+#[derive(Parser)]
+struct SemanticPrepareArgs {
+    /// Left document variant.
+    #[arg(long)]
+    left: PathBuf,
+    /// Right document variant.
+    #[arg(long)]
+    right: PathBuf,
+    /// Optional common base document.
+    #[arg(long)]
+    base: Option<PathBuf>,
+    /// New JSON bundle path. Existing files are never overwritten.
+    #[arg(long)]
+    output: PathBuf,
+}
+
+#[derive(Parser)]
+struct SemanticReviewArgs {
+    /// Bundle produced by `semantic prepare`.
+    #[arg(long)]
+    bundle: PathBuf,
+    /// Agent-authored proposal JSON.
+    #[arg(long)]
+    proposal: PathBuf,
+    /// Output format.
+    #[arg(long, value_enum, default_value_t = FormatArg::Text)]
+    format: FormatArg,
+}
+
+#[derive(Parser)]
+struct SemanticApplyArgs {
+    /// Bundle produced by `semantic prepare`.
+    #[arg(long)]
+    bundle: PathBuf,
+    /// Reviewed agent-authored proposal JSON.
+    #[arg(long)]
+    proposal: PathBuf,
+    /// New merged document path. Existing files are never overwritten.
+    #[arg(long)]
+    output: PathBuf,
+    /// Output format.
+    #[arg(long, value_enum, default_value_t = FormatArg::Text)]
+    format: FormatArg,
 }
 
 #[derive(Parser)]
@@ -87,8 +164,83 @@ fn main() -> ExitCode {
 fn run() -> anyhow::Result<ExitCode> {
     let cli = Cli::parse();
     match cli.command {
+        Command::Capabilities(args) => run_capabilities(args),
         Command::Compare(args) => run_compare(args),
+        Command::Semantic(args) => run_semantic(args),
     }
+}
+
+fn run_capabilities(args: CapabilitiesArgs) -> anyhow::Result<ExitCode> {
+    let value = serde_json::json!({
+        "cli_version": env!("CARGO_PKG_VERSION"),
+        "semantic_protocol_versions": [SCHEMA_VERSION],
+        "semantic_max_input_bytes": MAX_INPUT_BYTES,
+        "semantic_extensions": SUPPORTED_EXTENSIONS,
+        "commands": [
+            "capabilities",
+            "compare",
+            "semantic prepare",
+            "semantic review",
+            "semantic apply"
+        ]
+    });
+    match args.format {
+        FormatArg::Json => println!("{}", serde_json::to_string_pretty(&value)?),
+        FormatArg::Text => {
+            println!("Confold CLI {}", env!("CARGO_PKG_VERSION"));
+            println!("Semantic protocol: v{SCHEMA_VERSION}");
+            println!("Semantic input limit: {MAX_INPUT_BYTES} bytes per file");
+            println!("Semantic extensions: {}", SUPPORTED_EXTENSIONS.join(", "));
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn run_semantic(args: SemanticArgs) -> anyhow::Result<ExitCode> {
+    match args.command {
+        SemanticCommand::Prepare(args) => {
+            let bundle = semantic_prepare(&args.left, &args.right, args.base.as_deref())?;
+            write_json_new(&args.output, &bundle)?;
+            let value = serde_json::json!({
+                "bundle": args.output,
+                "operation_id": bundle.operation_id,
+                "fast_path": bundle.fast_path,
+            });
+            println!("{}", serde_json::to_string_pretty(&value)?);
+        }
+        SemanticCommand::Review(args) => {
+            let bundle = read_bundle(&args.bundle)?;
+            let proposal = read_proposal(&args.proposal)?;
+            let report = semantic_review(&bundle, &proposal)?;
+            match args.format {
+                FormatArg::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+                FormatArg::Text => {
+                    println!("Verdict: {:?}", report.verdict);
+                    println!("Applicable: {}", report.applicable);
+                    println!("Summary: {}", report.summary);
+                    for diff in report.diffs {
+                        println!(
+                            "\n--- {:?} to result ---\n{}",
+                            diff.source, diff.unified_diff
+                        );
+                    }
+                }
+            }
+        }
+        SemanticCommand::Apply(args) => {
+            let bundle = read_bundle(&args.bundle)?;
+            let proposal = read_proposal(&args.proposal)?;
+            let report = semantic_apply(&bundle, &proposal, &args.output)?;
+            match args.format {
+                FormatArg::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+                FormatArg::Text => {
+                    println!("Wrote {}", report.output.display());
+                    println!("SHA-256: {}", report.sha256);
+                }
+            }
+        }
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 fn run_compare(args: CompareArgs) -> anyhow::Result<ExitCode> {

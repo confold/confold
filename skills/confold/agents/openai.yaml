@@ -1,0 +1,4 @@
+interface:
+  display_name: "Confold"
+  short_description: "Compare and merge documents semantically"
+  default_prompt: "Use $confold to compare these document variants semantically and prepare a safe reviewed merge."

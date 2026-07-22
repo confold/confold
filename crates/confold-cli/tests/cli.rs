@@ -109,3 +109,181 @@ fn missing_directory_errors_with_code_2() {
         .code(2)
         .stderr(predicate::str::contains("error:"));
 }
+
+#[test]
+fn capabilities_reports_semantic_protocol() {
+    let output = Command::cargo_bin("confold")
+        .unwrap()
+        .args(["capabilities", "--format", "json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let value: serde_json::Value = serde_json::from_slice(&output).expect("valid JSON");
+    assert_eq!(value["semantic_protocol_versions"], serde_json::json!([1]));
+    assert!(value["commands"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|value| value == "semantic prepare"));
+}
+
+#[test]
+fn semantic_prepare_review_and_apply_round_trip() {
+    let dir = tempfile::tempdir().unwrap();
+    let left = dir.path().join("left.md");
+    let right = dir.path().join("right.md");
+    let bundle = dir.path().join("bundle.json");
+    let proposal = dir.path().join("proposal.json");
+    let merged = dir.path().join("merged.md");
+    write(dir.path(), "left.md", b"# Left\n");
+    write(dir.path(), "right.md", b"# Right\n");
+
+    Command::cargo_bin("confold")
+        .unwrap()
+        .args([
+            "semantic",
+            "prepare",
+            "--left",
+            left.to_str().unwrap(),
+            "--right",
+            right.to_str().unwrap(),
+            "--output",
+            bundle.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let bundle_json: serde_json::Value =
+        serde_json::from_slice(&fs::read(&bundle).unwrap()).expect("valid bundle JSON");
+    let proposal_json = serde_json::json!({
+        "schema_version": 1,
+        "operation_id": bundle_json["operation_id"],
+        "verdict": "merged",
+        "summary": "Preserve both headings",
+        "contributions": [
+            {"source": "left", "intent": "Left heading", "disposition": "preserved"},
+            {"source": "right", "intent": "Right heading", "disposition": "preserved"}
+        ],
+        "warnings": [],
+        "result": "# Left and right\n"
+    });
+    fs::write(
+        &proposal,
+        serde_json::to_vec_pretty(&proposal_json).unwrap(),
+    )
+    .unwrap();
+
+    Command::cargo_bin("confold")
+        .unwrap()
+        .args([
+            "semantic",
+            "review",
+            "--bundle",
+            bundle.to_str().unwrap(),
+            "--proposal",
+            proposal.to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"applicable\": true"));
+
+    Command::cargo_bin("confold")
+        .unwrap()
+        .args([
+            "semantic",
+            "apply",
+            "--bundle",
+            bundle.to_str().unwrap(),
+            "--proposal",
+            proposal.to_str().unwrap(),
+            "--output",
+            merged.to_str().unwrap(),
+            "--format",
+            "json",
+        ])
+        .assert()
+        .success();
+    assert_eq!(fs::read_to_string(&merged).unwrap(), "# Left and right\n");
+}
+
+#[test]
+fn semantic_apply_rejects_stale_input_and_existing_output() {
+    let dir = tempfile::tempdir().unwrap();
+    let left = dir.path().join("left.md");
+    let right = dir.path().join("right.md");
+    let bundle = dir.path().join("bundle.json");
+    let proposal = dir.path().join("proposal.json");
+    let merged = dir.path().join("merged.md");
+    write(dir.path(), "left.md", b"left\n");
+    write(dir.path(), "right.md", b"right\n");
+
+    Command::cargo_bin("confold")
+        .unwrap()
+        .args([
+            "semantic",
+            "prepare",
+            "--left",
+            left.to_str().unwrap(),
+            "--right",
+            right.to_str().unwrap(),
+            "--output",
+            bundle.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    let bundle_json: serde_json::Value =
+        serde_json::from_slice(&fs::read(&bundle).unwrap()).unwrap();
+    fs::write(
+        &proposal,
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "schema_version": 1,
+            "operation_id": bundle_json["operation_id"],
+            "verdict": "prefer_left",
+            "summary": "Left is authoritative",
+            "contributions": [],
+            "warnings": [],
+            "result": null
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    fs::write(&right, b"changed\n").unwrap();
+    Command::cargo_bin("confold")
+        .unwrap()
+        .args([
+            "semantic",
+            "apply",
+            "--bundle",
+            bundle.to_str().unwrap(),
+            "--proposal",
+            proposal.to_str().unwrap(),
+            "--output",
+            merged.to_str().unwrap(),
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("input changed after prepare"));
+
+    fs::write(&right, b"right\n").unwrap();
+    fs::write(&merged, b"do not replace\n").unwrap();
+    Command::cargo_bin("confold")
+        .unwrap()
+        .args([
+            "semantic",
+            "apply",
+            "--bundle",
+            bundle.to_str().unwrap(),
+            "--proposal",
+            proposal.to_str().unwrap(),
+            "--output",
+            merged.to_str().unwrap(),
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("output already exists"));
+    assert_eq!(fs::read_to_string(&merged).unwrap(), "do not replace\n");
+}

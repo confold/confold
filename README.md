@@ -158,6 +158,59 @@ Markers: `=` identical · `~` different · `<` left-only · `>` right-only · `.
 Useful flags: `--method full|quick|size|mtime|size-mtime`, `--include/--exclude <glob>`,
 `--format text|json`, `--no-recursive`, `--fail-on-diff` (exit 1 on any difference).
 
+### Semantic document compare and merge
+
+The current source tree includes semantic protocol v1 for AI-assisted comparison of two Markdown or
+plain-text variants, with an optional common base. Confold owns input snapshots, SHA-256 validation,
+deterministic review diffs and safe output creation; the agent only proposes meaning-level decisions.
+
+This is useful today for people who already work with an AI coding or document agent: Confold adds a
+provider-neutral, fail-closed boundary around a task that an agent would otherwise perform with
+unvalidated reads and writes. Deterministic fast paths avoid model work when the answer is already
+clear, while ambiguous prose reaches the agent as a bounded, versioned bundle.
+
+Confold itself does not invoke or configure an LLM. The user's agent runtime supplies the model and
+writes only a proposal; Confold validates that proposal, rechecks every input, shows deterministic
+diffs and creates a separate output after explicit confirmation. Whether document content leaves the
+machine therefore depends on the selected agent runtime and its provider. The desktop UI does not yet
+expose this workflow; desktop resolver and provider configuration remain roadmap work.
+
+```sh
+confold capabilities --format json
+
+confold semantic prepare \
+  --left draft-a.md --right draft-b.md --base common.md \
+  --output bundle.json
+
+# An agent using skills/confold writes proposal.json, then Confold validates it:
+confold semantic review \
+  --bundle bundle.json --proposal proposal.json --format json
+
+# Apply always creates a separate output and never overwrites an input or existing file:
+confold semantic apply \
+  --bundle bundle.json --proposal proposal.json \
+  --output merged.md --format json
+```
+
+Both review and apply re-read every input and reject a stale bundle. Binary files, invalid UTF-8,
+source code and structured configuration are outside protocol v1. The companion public agent skill is
+in [`skills/confold`](skills/confold).
+
+Generate a ready-to-use three-way prose fixture alongside the normal demo trees:
+
+```sh
+scripts/gen-demo.sh /tmp/confold-demo
+
+confold semantic prepare \
+  --base /tmp/confold-demo/semantic/base.md \
+  --left /tmp/confold-demo/semantic/left.md \
+  --right /tmp/confold-demo/semantic/right.md \
+  --output /tmp/confold-demo/semantic-bundle.json
+```
+
+The left variant adds audit evidence, the right variant adds stale-plan and no-overwrite gates, and
+both retain the base rollback intent. This makes omissions visible during proposal review.
+
 ## Architecture
 
 A strict dependency layering (frontend → engine → VFS) keeps the engine reusable and the backends
@@ -167,6 +220,7 @@ pluggable:
 |---|---|
 | [`confold-vfs`](crates/confold-vfs) | The `Source`/`SourceMut` (VFS) traits + `LocalSource`. The engine never touches `std::fs` directly. |
 | [`confold-core`](crates/confold-core) | The compare engine: walk + match, metadata triage, content compare, result model + renderers. |
+| [`confold-semantic`](crates/confold-semantic) | Versioned AI proposal protocol, stable input fingerprints, review diffs, stale-input rejection and atomic create-new output. |
 | [`confold-sftp`](crates/confold-sftp) · [`confold-s3`](crates/confold-s3) | Remote source backends (SFTP, S3) — pure-Rust, no native deps. |
 | [`confold-cli`](crates/confold-cli) | The `confold` command-line frontend. |
 | [`confold-app`](confold-app) | The Tauri v2 + Svelte 5 desktop GUI. |
@@ -179,8 +233,8 @@ visual smokes, and in-process SFTP/S3 hermetic harnesses — no Docker).
 ## Roadmap
 
 - **More sources** — SMB, NFS, WebDAV, cloud drives, on the same engine.
-- **AI-assisted semantic reconciliation** — the differentiator: help resolve conflicts by *meaning*, not
-  just bytes.
+- **Desktop semantic reconciliation** — connect the validated CLI + skill protocol to file-level GUI
+  actions and unresolved Sync conflicts.
 - **Signed & notarized builds** — code-signing for macOS and Windows to drop the install-time prompts.
 - **Confold Cloud** — a hosted "reconcile and sync across sources, from one place" service (later).
 

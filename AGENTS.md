@@ -13,7 +13,7 @@ GUI, and eventually AI-assisted **semantic** reconciliation.
 
 ## Current phase
 
-**v0.5.1 shipped (public release).** Confold is a complete, cross-platform folder-compare and sync tool
+**v0.6.0 shipped (public release).** Confold is a complete, cross-platform folder-compare and sync tool
 with a Tauri v2 + Svelte 5 desktop GUI, a headless CLI, and a layered engine crate architecture.
 
 **Three modes on one engine:** Compare (lazy/incremental folder tree, metadata + byte-level content
@@ -28,9 +28,12 @@ descriptors). Adding S3 required zero frontend changes, proving the plugin model
 **Distribution:** GitHub releases (`github.com/confold/confold`), web (`confold.com`, Cloudflare Pages),
 Homebrew + Scoop + Chocolatey + winget. Ad-hoc macOS signing (no Apple Developer account needed).
 
-**Next: Phase 6** — OS shell / file-browser integration (right-click "Compare with Confold" via
-`confold://` URI scheme + `tauri-plugin-deep-link`). Spec proposed, awaiting approval. Later: deeper
-sources (SMB, NFS, WebDAV), AI-assisted semantic reconciliation.
+**Semantic protocol:** `confold-semantic`, the `confold semantic prepare/review/apply` CLI and the
+public `skills/confold` workflow provide a validated proposal boundary for two-way and three-way prose
+reconciliation. Apply creates a separate output and rejects stale inputs or existing destinations.
+
+**Next:** connect this protocol to desktop file actions and unresolved Sync conflicts. Later: deeper
+sources (SMB, NFS, WebDAV), structured resolvers and baseline-aware replica reconciliation.
 
 Application code is written against an **approved spec** (see Workflow below).
 
@@ -89,10 +92,10 @@ sources are not committed here.
 
 ## Future work (noted)
 
-- **AI SKILL for driving Confold** — once a usable tool exists, a companion skill teaching agents to
-  use it (folder consolidation, dedup, deep diff). Out of scope until the tool exists.
-- **Semantic (AI-assisted) synchronization** — reconcile by intent, not just bytes/lines (a pluggable
-  resolver layer). A key differentiator; later phase.
+- **Desktop semantic actions**: expose the validated proposal/review/apply flow from the side-by-side
+  viewer without duplicating its Rust safety boundary.
+- **Semantic folder synchronization**: feed unresolved Sync conflicts through the resolver, backed by
+  durable baselines and exact replica metadata.
 
 ## graphify
 
