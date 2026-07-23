@@ -16,6 +16,8 @@ VERSION="${1:-}"
 VERSION="${VERSION#v}"
 TAG="v${VERSION}"
 REPO="confold/confold"
+WINGET_SCHEMA_VERSION="1.12.0"
+WINGET_PUBLISHER="confold"
 
 PREV_VERSION=$(awk '/^[[:space:]]*version / {gsub(/"/, "", $2); print $2; exit}' dist/brew/Casks/confold.rb)
 [[ -z "$PREV_VERSION" ]] && { echo "Could not read current version from dist/brew/Casks/confold.rb" >&2; exit 1; }
@@ -104,7 +106,6 @@ p "s/\"hash\": \"[^\"]*\"/\"hash\": \"${SHA_WIN_NSIS}\"/"    dist/scoop/bucket/c
 # autoupdate url uses $version templating, so [0-9.]+ leaves it untouched.
 p "s|download/v[0-9.]+/Confold_[0-9.]+_x64-setup\\.exe|download/v${VERSION}/Confold_${VERSION}_x64-setup.exe|" dist/scoop/bucket/confold.json
 
-# ── winget — create the new version folder, bump MSI url + sha ────────────────
 echo "Updating winget..."
 WINGET_OLD="dist/winget/manifests/c/Confold/Confold/${PREV_VERSION}"
 WINGET_NEW="dist/winget/manifests/c/Confold/Confold/${VERSION}"
@@ -113,7 +114,11 @@ for f in "$WINGET_NEW"/*.yaml; do
   p "s/PackageVersion: .*/PackageVersion: ${VERSION}/"                                                "$f"
   p "s|/v[0-9.]+/Confold_[0-9.]+_x64_en-US\\.msi|/v${VERSION}/Confold_${VERSION}_x64_en-US.msi|g"     "$f"
   p "s/InstallerSha256: [0-9A-F]{64}/InstallerSha256: ${SHA_WIN_MSI_UP}/"                             "$f"
+  p "s|(winget-manifest\\.[^.]+\\.)[0-9.]+(\\.schema\\.json)|\${1}${WINGET_SCHEMA_VERSION}\${2}|"     "$f"
+  p "s/ManifestVersion: .*/ManifestVersion: ${WINGET_SCHEMA_VERSION}/"                                "$f"
+  p "s/^Publisher: .*/Publisher: ${WINGET_PUBLISHER}/"                                               "$f"
 done
+./scripts/validate-winget-manifests.sh "$WINGET_NEW" "$VERSION"
 
 # ── Chocolatey (Windows NSIS, silent install) ─────────────────────────────────
 echo "Updating Chocolatey..."
@@ -148,7 +153,7 @@ echo ""
 
 # ── Verify no stale version references remain ──────────────────────────────────
 echo "Verifying no stale version references remain..."
-STALE=$(grep -r "${ORIGINAL_VERSION}" \
+STALE=$(grep -rF "${ORIGINAL_VERSION}" \
   --include="*.rs" --include="*.ts" --include="*.tsx" \
   --include="*.toml" --include="*.json" --include="*.md" \
   --include="*.html" --include="*.sh" --include="*.rb" \

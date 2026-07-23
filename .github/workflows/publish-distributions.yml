@@ -129,6 +129,8 @@ jobs:
           FORK="juanyque/winget-pkgs"
           UPSTREAM="microsoft/winget-pkgs"
 
+          ./scripts/validate-winget-manifests.sh "dist/winget/${MANIFEST_DIR}" "$VERSION"
+
           # Sync the fork's master with upstream before branching.
           UPSTREAM_SHA=$(gh api "repos/${UPSTREAM}/git/ref/heads/master" --jq '.object.sha')
 

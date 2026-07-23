@@ -19,8 +19,9 @@ winget install Confold.Confold
   not duplicated here. No `VCRedist` dependency — Tauri's installer handles the WebView2 runtime.
 - `Confold.Confold.locale.en-US.yaml` — publisher/description/tags.
 
-`scripts/bump-packaging.sh` copies the previous version folder to a new one and rewrites the
-version, MSI URL and `InstallerSha256`.
+`scripts/bump-packaging.sh` copies the previous version folder to a new one, rewrites the version,
+MSI URL and `InstallerSha256`, and normalizes the publisher and manifest schema. Both the bump
+script and the publication workflow run `scripts/validate-winget-manifests.sh` before submission.
 
 ## Notes
 
