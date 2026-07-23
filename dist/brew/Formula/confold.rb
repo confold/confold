@@ -1,9 +1,9 @@
 class Confold < Formula
   desc "Fast, keyboard-driven folder and file comparison, migrate and sync tool"
   homepage "https://confold.com"
-  url "https://github.com/confold/confold/releases/download/v0.6.0/Confold_0.6.0_amd64.AppImage"
-  sha256 "671065c908ff71fbe00a58fcc08017ebb2ff9aee994e880e4227496c40a94936"
-  version "0.6.0"
+  url "https://github.com/confold/confold/releases/download/v0.6.1/Confold_0.6.1_amd64.AppImage"
+  sha256 "f4601d08c83f94c765d7f1b7d998b9cc87d232200cf87d25009c28b58e9e052e"
+  version "0.6.1"
   license "Apache-2.0"
 
   # Confold is a Tauri GUI app — on Linux it ships as an AppImage, not a portable CLI binary.
