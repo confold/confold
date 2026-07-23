@@ -6,7 +6,19 @@ All notable changes to Confold are documented here. The format is based on
 
 ## [Unreleased]
 
-## [0.5.1] — unreleased
+## [0.6.1] — 2026-07-23
+
+### Added
+- A validated semantic reconciliation protocol and CLI workflow for preparing, reviewing, and
+  applying two-way and three-way prose proposals without overwriting source files.
+
+### Fixed
+- File deep links now open directly in the side-by-side comparison instead of failing with
+  `Not a directory (os error 20)` until the sources were opened manually.
+- winget manifests now use the required `confold` publisher, target manifest schema 1.12.0, and
+  are validated before a distribution PR is opened.
+
+## [0.6.0] — 2026-07-14
 
 ### Fixed
 - macOS bundles are now ad-hoc signed, so Gatekeeper shows the standard "unidentified developer"
@@ -28,6 +40,7 @@ First public release. (Versions 0.1–0.4 were internal development milestones.)
 - **Sync** — bidirectional reconciliation with conflict resolution, on the Migrate engine.
 - Cross-platform desktop app (Tauri v2 + Svelte 5) for Linux, macOS and Windows.
 
-[Unreleased]: https://github.com/confold/confold/compare/v0.5.1...HEAD
-[0.5.1]: https://github.com/confold/confold/compare/v0.5.0...v0.5.1
+[Unreleased]: https://github.com/confold/confold/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/confold/confold/compare/v0.6.0...v0.6.1
+[0.6.0]: https://github.com/confold/confold/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/confold/confold/releases/tag/v0.5.0

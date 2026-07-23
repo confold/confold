@@ -16,10 +16,10 @@ no portable archive):
 ## Cutting a release
 
 1. Push a `v*` tag → `release.yml` builds all bundles into a **draft** GitHub release.
-2. Run `./scripts/bump-packaging.sh <version>` locally — it reads the draft's digests from the
-   GitHub API and rewrites every manifest here (versions + sha256). Review `git diff dist/`.
-3. Commit the bumped `dist/` to `main` **before publishing** — the publish workflows check out
-   `main`, not the tag.
+2. After every platform build succeeds, the workflow runs `./scripts/bump-packaging.sh <version>`.
+   It reads the draft's digests from the GitHub API, validates the winget manifests, rewrites all
+   package manifests and website download links, then commits those generated changes to `main`.
+3. Review the workflow's packaging commit and the draft release assets.
 4. Publish the draft release. On `release: published`:
    - `publish-distributions.yml` pushes the cask+formula to the tap, the manifest to the Scoop
      bucket, and opens a winget PR.

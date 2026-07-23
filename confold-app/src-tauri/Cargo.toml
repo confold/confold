@@ -1,6 +1,6 @@
 [package]
 name = "confold-app"
-version = "0.6.0"
+version = "0.6.1"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -35,4 +35,3 @@ tauri-plugin-deep-link = "2"
 
 [dev-dependencies]
 tempfile = "3"
-

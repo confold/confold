@@ -13,7 +13,7 @@ GUI, and eventually AI-assisted **semantic** reconciliation.
 
 ## Current phase
 
-**v0.6.0 shipped (public release).** Confold is a complete, cross-platform folder-compare and sync tool
+**v0.6.1 prepared for public release.** Confold is a complete, cross-platform folder-compare and sync tool
 with a Tauri v2 + Svelte 5 desktop GUI, a headless CLI, and a layered engine crate architecture.
 
 **Three modes on one engine:** Compare (lazy/incremental folder tree, metadata + byte-level content

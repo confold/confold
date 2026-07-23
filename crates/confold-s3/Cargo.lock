@@ -178,7 +178,7 @@ checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
 
 [[package]]
 name = "confold-s3"
-version = "0.5.1"
+version = "0.6.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -195,7 +195,7 @@ dependencies = [
 
 [[package]]
 name = "confold-vfs"
-version = "0.5.1"
+version = "0.6.1"
 dependencies = [
  "memmap2",
  "serde",
