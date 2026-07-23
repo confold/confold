@@ -13,7 +13,19 @@ permissions:
   contents: write
 
 jobs:
+  packaging-preflight:
+    name: Validate packaging scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check packaging scripts
+        run: |
+          bash -n scripts/bump-packaging.sh scripts/check-stale-version-refs.sh
+          ./scripts/tests/check-stale-version-refs.sh
+
   release:
+    needs: packaging-preflight
     strategy:
       fail-fast: false
       matrix:

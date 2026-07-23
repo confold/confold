@@ -153,20 +153,7 @@ echo ""
 
 # ── Verify no stale version references remain ──────────────────────────────────
 echo "Verifying no stale version references remain..."
-STALE=$(grep -rF "${ORIGINAL_VERSION}" \
-  --include="*.rs" --include="*.ts" --include="*.tsx" \
-  --include="*.toml" --include="*.json" --include="*.md" \
-  --include="*.html" --include="*.sh" --include="*.rb" \
-  --include="*.yml" --include="*.yaml" --include="*.txt" \
-  --include="*.yml" \
-  --exclude-dir=node_modules \
-  --exclude-dir=target \
-  --exclude-dir=dist \
-  --exclude-dir=.git \
-  --exclude-dir=.git \
-  . 2>/dev/null | grep -v "CHANGELOG" | grep -v "CHANGELOG.md" | grep -v "graphify-out" | grep -v "node_modules" | grep -v "target/" | grep -v "dist/" || true)
-
-if [[ -n "$STALE" ]]; then
+if ! STALE=$(./scripts/check-stale-version-refs.sh "$ORIGINAL_VERSION"); then
   echo "❌ ERROR: Stale version references found for ${ORIGINAL_VERSION}:" >&2
   echo "$STALE" >&2
   echo "" >&2
