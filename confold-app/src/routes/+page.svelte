@@ -353,26 +353,31 @@
                 const dSpec: SourceSpec = { kind: "fs", fields: { root: d } };
                 originSpec = oSpec;
                 destSpec = dSpec;
-                const [oExists, dExists] = await Promise.all([
-                  commands.pathExists(o).catch(() => false),
-                  commands.pathExists(d).catch(() => false),
+                const [oTest, dTest] = await Promise.all([
+                  commands.testSource(oSpec).catch(() => null),
+                  commands.testSource(dSpec).catch(() => null),
                 ]);
-                originStale = !oExists;
-                destStale = !dExists;
-                if (oExists && dExists) {
-                  originRecents = prependRecent(originRecents, oSpec, true);
-                  destRecents = prependRecent(destRecents, dSpec, true);
+                originStale = oTest?.ok !== true;
+                destStale = dTest?.ok !== true;
+                originIsDir = oTest?.ok ? oTest.is_dir : null;
+                destIsDir = dTest?.ok ? dTest.is_dir : null;
+                if (oTest?.ok && dTest?.ok) {
+                  originRecents = prependRecent(originRecents, oSpec, oTest.is_dir);
+                  destRecents = prependRecent(destRecents, dSpec, dTest.is_dir);
                   persistRecents();
                   openedFile = null;
                   mode = "compare";
-                  runCompare();
+                  await tick();
+                  await run();
                 }
               } else if (o) {
                 const oSpec: SourceSpec = { kind: "fs", fields: { root: o } };
                 originSpec = oSpec;
-                originStale = !(await commands.pathExists(o).catch(() => false));
-                if (!originStale) {
-                  originRecents = prependRecent(originRecents, oSpec, true);
+                const oTest = await commands.testSource(oSpec).catch(() => null);
+                originStale = oTest?.ok !== true;
+                originIsDir = oTest?.ok ? oTest.is_dir : null;
+                if (oTest?.ok) {
+                  originRecents = prependRecent(originRecents, oSpec, oTest.is_dir);
                   persistRecents();
                 }
               }
