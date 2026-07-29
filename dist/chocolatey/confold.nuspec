@@ -28,6 +28,6 @@ public source on GitHub.
     <releaseNotes>https://github.com/confold/confold/releases/tag/v0.6.1</releaseNotes>
   </metadata>
   <files>
-    <file src="tools\**" target="tools" />
+    <file src="tools\chocolateyinstall.ps1" target="tools" />
   </files>
 </package>

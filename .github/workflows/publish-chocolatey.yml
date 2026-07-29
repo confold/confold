@@ -9,9 +9,8 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Package version (e.g. 0.5.1)"
+        description: "Package version (e.g. 0.6.1)"
         required: true
-        default: "0.5.1"
 
 jobs:
   publish:

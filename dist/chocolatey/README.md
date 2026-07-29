@@ -15,10 +15,9 @@ choco install confold
 - `tools/chocolateyinstall.ps1` — downloads the official `-setup.exe` (NSIS), verifies its
   SHA256, and installs it silently (`/S`). Chocolatey's auto-uninstaller picks up the
   Add/Remove Programs entry NSIS registers, so no uninstall script is needed.
-- `tools/VERIFICATION.txt` — moderator verification (download source + checksum).
-- `tools/LICENSE.txt` — copy of the project's Apache-2.0 license (required by moderation).
 
-URL, checksum, version and release-notes link are bumped by `scripts/bump-packaging.sh`.
+URL, checksum, version and release-notes link are bumped by `scripts/bump-packaging.sh`. This is a
+download-only package, so its `tools` directory contains only the install script.
 
 ## Notes
 

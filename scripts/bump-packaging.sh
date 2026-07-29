@@ -127,10 +127,6 @@ p "s/'[0-9A-F]{64}'/'${SHA_WIN_NSIS_UP}'/"                                      
 p "s|<version>[^<]*</version>|<version>${VERSION}</version>|"                                   dist/chocolatey/confold.nuspec
 p "s|releases/tag/v[0-9.]+|releases/tag/v${VERSION}|g"                                          dist/chocolatey/confold.nuspec
 p "s|jsdelivr.net/gh/confold/confold@v[0-9.]+/|jsdelivr.net/gh/confold/confold@v${VERSION}/|"   dist/chocolatey/confold.nuspec
-p "s|releases/tag/v[0-9.]+|releases/tag/v${VERSION}|g"                                          dist/chocolatey/tools/VERIFICATION.txt
-p "s|release view v[0-9.]+|release view v${VERSION}|g"                                          dist/chocolatey/tools/VERIFICATION.txt
-p "s/Confold_[0-9.]+_x64-setup\\.exe/Confold_${VERSION}_x64-setup.exe/g"                        dist/chocolatey/tools/VERIFICATION.txt
-p "s/[0-9A-F]{64}/${SHA_WIN_NSIS_UP}/"                                                          dist/chocolatey/tools/VERIFICATION.txt
 
 # ── Website (versioned direct-download links + version label) ─────────────────
 # Cloudflare Pages redeploys web/ on push to main, so the download buttons track each release.
