@@ -39,7 +39,9 @@ async fn spawn_server(root: PathBuf) -> SocketAddr {
     let http = ConnBuilder::new(TokioExecutor::new());
     tokio::spawn(async move {
         loop {
-            let Ok((socket, _)) = listener.accept().await else { break };
+            let Ok((socket, _)) = listener.accept().await else {
+                break;
+            };
             let svc = service.clone(); // cheap (Arc inside)
             let http = http.clone();
             tokio::spawn(async move {
@@ -61,7 +63,9 @@ fn s3_config(addr: SocketAddr) -> S3Config {
 }
 
 fn client(addr: SocketAddr) -> impl ObjectStore {
-    s3_config(addr).build_store().expect("build object_store client")
+    s3_config(addr)
+        .build_store()
+        .expect("build object_store client")
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -91,12 +95,21 @@ async fn s3s_fs_roundtrips_put_get_range_and_list() {
         range: Some(GetRange::Bounded(0..5)),
         ..Default::default()
     };
-    let head2 = store.get_opts(&key, opts).await.unwrap().bytes().await.unwrap();
+    let head2 = store
+        .get_opts(&key, opts)
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
     assert_eq!(&head2[..], b"hello");
 
     // Delimiter listing — the directory-synthesis primitive (flat keyspace → dirs via common prefixes).
     store
-        .put(&ObjPath::from("dir/sub/n.txt"), PutPayload::from_static(b"x"))
+        .put(
+            &ObjPath::from("dir/sub/n.txt"),
+            PutPayload::from_static(b"x"),
+        )
         .await
         .unwrap();
     let res = store
@@ -136,7 +149,9 @@ fn spawn_server_thread(root: PathBuf) -> SocketAddr {
             tx.send(listener.local_addr().unwrap()).unwrap();
             let http = ConnBuilder::new(TokioExecutor::new());
             loop {
-                let Ok((socket, _)) = listener.accept().await else { break };
+                let Ok((socket, _)) = listener.accept().await else {
+                    break;
+                };
                 let svc = service.clone();
                 let http = http.clone();
                 tokio::spawn(async move {
@@ -171,8 +186,11 @@ fn s3_source_lists_reads_writes_and_removes() {
     let src = S3Source::connect(s3_config(addr), "").unwrap();
 
     // Write a top-level file + a nested file (SourceMut).
-    src.write_file(&RelPath::root().child("a.txt"), &BytesReader(b"alpha".to_vec()))
-        .unwrap();
+    src.write_file(
+        &RelPath::root().child("a.txt"),
+        &BytesReader(b"alpha".to_vec()),
+    )
+    .unwrap();
     src.write_file(
         &RelPath::root().child("sub").child("b.txt"),
         &BytesReader(b"beta".to_vec()),
@@ -210,7 +228,9 @@ fn s3_source_lists_reads_writes_and_removes() {
         "no files should survive removal, got {remaining:?}"
     );
     assert!(
-        src.read_dir(&RelPath::root().child("sub")).unwrap().is_empty(),
+        src.read_dir(&RelPath::root().child("sub"))
+            .unwrap()
+            .is_empty(),
         "the removed subtree must be empty"
     );
 }

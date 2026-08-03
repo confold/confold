@@ -1,7 +1,7 @@
 # Confold — free, cross-platform folder compare + controlled synchronization. Apache-2.0.
 [workspace]
 resolver = "2"
-members = ["crates/confold-vfs", "crates/confold-core", "crates/confold-sync", "crates/confold-textdiff", "crates/confold-semantic", "crates/confold-cli", "crates/confold-sftp"]
+members = ["crates/confold-vfs", "crates/confold-core", "crates/confold-sync", "crates/confold-textdiff", "crates/confold-semantic", "crates/confold-provider", "crates/confold-cli", "crates/confold-sftp"]
 # The Tauri desktop app builds standalone (its own heavy Tauri deps) and path-depends on the engine
 # crates; keep it out of the engine workspace so `cargo build/test/lint` here stay fast.
 exclude = ["confold-app", "crates/confold-s3"]
@@ -37,6 +37,7 @@ confold-core = { path = "crates/confold-core" }
 confold-sync = { path = "crates/confold-sync" }
 confold-textdiff = { path = "crates/confold-textdiff" }
 confold-semantic = { path = "crates/confold-semantic" }
+confold-provider = { path = "crates/confold-provider" }
 
 # Quality lints applied across the workspace. clippy warnings are denied in CI via `cargo lint`.
 [workspace.lints.clippy]

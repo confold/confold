@@ -6,6 +6,7 @@
   import { segments, rangesFor, buildDetailModel } from "$lib/sbs-diff";
   import { fmtDate } from "$lib/format";
   import FileViewHeader from "./FileViewHeader.svelte";
+  import SemanticReviewAction from "./SemanticReviewAction.svelte";
 
   let {
     initial,
@@ -24,6 +25,8 @@
     onsaved,
     onback,
     onregisterexit,
+    autoReview = false,
+    onconfigureprovider,
   }: {
     initial: FileDiff;
     /** Each side as a source + relative path — what `save_file` writes through (any writable backend). */
@@ -53,7 +56,10 @@
     /** The parent registers a callback here so its Escape handler can delegate to this component's
      *  unsaved-changes guard instead of closing directly. */
     onregisterexit?: (fn: (() => void) | null) => void;
+    autoReview?: boolean;
+    onconfigureprovider?: (trigger: HTMLButtonElement) => void;
   } = $props();
+  const semanticRight = $derived(right);
 
   // Seeded once from `initial`; the parent wraps us in {#key leftPath+rightPath}, so a new file pair
   // re-instantiates this component (fresh `diff`/dirty state). The one-time capture is intended.
@@ -559,13 +565,21 @@
 <svelte:window onkeydown={onKey} />
 
 <div class="sbs-wrapper">
-<FileViewHeader {name} onback={attemptExit} {readOnly} {onkeep} {onskip}>
+<FileViewHeader {name} onback={attemptExit} {readOnly} {onkeep} {onskip} onsettings={onconfigureprovider}>
   {#snippet right()}
     <span class="fcount">
       <span class="s-rep">{diff.summary.replaced} changed</span>
       <span class="s-ins">{diff.summary.inserted} added</span>
       <span class="s-del">{diff.summary.deleted} removed</span>
     </span>
+    <SemanticReviewAction
+      {left}
+      right={semanticRight}
+      disabled={leftDirty || rightDirty}
+      autostart={autoReview}
+      onconfigure={onconfigureprovider}
+      onsaved={onsaved}
+    />
   {/snippet}
 </FileViewHeader>
 

@@ -2,15 +2,21 @@
   // Skeleton rendered immediately on file click while diff_file is in flight.
   // Matches SideBySide's outer layout exactly so the transition from skeleton → real SideBySide
   // is a seamless in-place fill (same DOM position, same dimensions, same structure).
-  let { name, onback }: { name: string; onback: () => void } = $props();
+  import FileViewHeader from "./FileViewHeader.svelte";
+
+  let {
+    name,
+    onback,
+    onconfigureprovider,
+  }: {
+    name: string;
+    onback: () => void;
+    onconfigureprovider?: (trigger: HTMLButtonElement) => void;
+  } = $props();
 </script>
 
 <div class="sbs-wrapper">
-  <!-- Header: same as SideBySide's .fhead -->
-  <div class="fhead">
-    <button class="ghost back" type="button" onclick={onback} aria-label="back">←</button>
-    <span class="fname">{name}</span>
-  </div>
+  <FileViewHeader {name} {onback} onsettings={onconfigureprovider} />
 
   <!-- Navigation bar: same layout as SideBySide's .bar, all controls disabled -->
   <div class="bar">
@@ -38,20 +44,6 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
-  }
-  .fhead {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-    padding: 0.3rem 0;
-  }
-  .fname {
-    font-family: ui-monospace, monospace;
-    font-size: 0.9rem;
-    font-weight: 600;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
   .bar {
     display: flex;
@@ -110,7 +102,6 @@
   }
   button:disabled { opacity: 0.35; cursor: default; }
   button.ghost { background: transparent; border-color: #aaa; color: inherit; }
-  button.back { padding: 0.15em 0.55em; line-height: 1; font-size: 1rem; }
   button.nav  { padding: 0.2em 0.55em; font-size: 0.85rem; }
   /* Dark mode */
   @media (prefers-color-scheme: dark) {

@@ -1,26 +1,31 @@
 #[allow(unused_imports)]
-use crate::sources::*;
-#[allow(unused_imports)]
-use crate::scan::*;
-#[allow(unused_imports)]
 use crate::apply::*;
 #[allow(unused_imports)]
 use crate::diff::*;
 #[allow(unused_imports)]
-use crate::{ENTRY_RESOLVED, MIGRATE_PROGRESS, MIGRATE_DONE, MIGRATE_PHASE, PLAN_PROGRESS, PLAN_READY};
+use crate::scan::*;
+#[allow(unused_imports)]
+use crate::sources::*;
+#[allow(unused_imports)]
+use crate::{
+    ENTRY_RESOLVED, MIGRATE_DONE, MIGRATE_PHASE, MIGRATE_PROGRESS, PLAN_PROGRESS, PLAN_READY,
+};
 
 #[allow(unused_imports)]
 use confold_core::{
     compare as engine_compare, compare_at_with_progress as engine_compare_with_progress,
-    compare_file as engine_compare_file, full_equal, list_level as engine_list_level,
-    Capabilities, CompareConfig, CompareMethod, ContentReader, DiffEntry, DiffReport, DiffStatus,
-    EntryMeta, FilterSet, LocalSource, RelPath, Source, SourceError, SourceMut,
-    DEFAULT_LARGE_FILE_THRESHOLD,
+    compare_file as engine_compare_file, full_equal, list_level as engine_list_level, Capabilities,
+    CompareConfig, CompareMethod, ContentReader, DiffEntry, DiffReport, DiffStatus, EntryMeta,
+    FilterSet, LocalSource, RelPath, Source, SourceError, SourceMut, DEFAULT_LARGE_FILE_THRESHOLD,
 };
 #[allow(unused_imports)]
 use confold_s3::{S3Config, S3Source};
 #[allow(unused_imports)]
 use confold_sftp::{SftpAuth, SftpConfig, SftpSource};
+#[allow(unused_imports)]
+use confold_sync::{apply as sync_apply, ActionOutcome, SyncAction, SyncOp};
+#[allow(unused_imports)]
+use confold_textdiff::{diff_hunks, diff_text, is_binary_bytes, FileDiff, FileDiffHunks};
 #[allow(unused_imports)]
 use serde::{Deserialize, Serialize};
 #[allow(unused_imports)]
@@ -31,10 +36,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 #[allow(unused_imports)]
 use tauri::{AppHandle, Emitter, State};
-#[allow(unused_imports)]
-use confold_sync::{apply as sync_apply, ActionOutcome, SyncAction, SyncOp};
-#[allow(unused_imports)]
-use confold_textdiff::{diff_text, diff_hunks, is_binary_bytes, FileDiff, FileDiffHunks};
 
 /// Which categories of difference a migration (origin → destination) acts on. The destructive ones
 /// are opt-in in the UI, each behind a warning. The MOVE step (delete origin after a verified-complete
@@ -82,7 +83,11 @@ impl LeafOp {
         for component in &self.rel_path {
             rel = rel.child(component);
         }
-        SyncAction { rel_path: rel, op, is_dir: self.is_dir }
+        SyncAction {
+            rel_path: rel,
+            op,
+            is_dir: self.is_dir,
+        }
     }
 }
 
@@ -133,10 +138,16 @@ pub(crate) fn count_items(node: &DiffEntry) -> usize {
 pub(crate) fn collect_copy_leaves(node: &DiffEntry, out: &mut Vec<LeafOp>) {
     for child in &node.children {
         if !child.is_dir {
-            out.push(LeafOp { rel_path: child.rel_path.components().to_vec(), is_dir: false });
+            out.push(LeafOp {
+                rel_path: child.rel_path.components().to_vec(),
+                is_dir: false,
+            });
         } else if child.children.is_empty() {
             // Empty directory: needs an explicit create since no file copy will trigger mkdir.
-            out.push(LeafOp { rel_path: child.rel_path.components().to_vec(), is_dir: true });
+            out.push(LeafOp {
+                rel_path: child.rel_path.components().to_vec(),
+                is_dir: true,
+            });
         } else {
             collect_copy_leaves(child, out);
         }
@@ -149,17 +160,27 @@ pub(crate) fn collect_copy_leaves(node: &DiffEntry, out: &mut Vec<LeafOp>) {
 pub(crate) fn collect_delete_leaves(node: &DiffEntry, out: &mut Vec<LeafOp>) {
     for child in &node.children {
         if !child.is_dir {
-            out.push(LeafOp { rel_path: child.rel_path.components().to_vec(), is_dir: false });
+            out.push(LeafOp {
+                rel_path: child.rel_path.components().to_vec(),
+                is_dir: false,
+            });
         } else {
             collect_delete_leaves(child, out); // children first
-            out.push(LeafOp { rel_path: child.rel_path.components().to_vec(), is_dir: true }); // then the dir (now empty)
+            out.push(LeafOp {
+                rel_path: child.rel_path.components().to_vec(),
+                is_dir: true,
+            }); // then the dir (now empty)
         }
     }
 }
 
 /// Build a copy action for a diff entry in a given direction. A directory expands into per-leaf copies
 /// (`leaves`); a file is a single op. Shared by Migrate and Sync — `op` carries the direction.
-pub(crate) fn copy_subtree_action(c: &DiffEntry, op: SyncOp, reason: MigrateReason) -> MigrateAction {
+pub(crate) fn copy_subtree_action(
+    c: &DiffEntry,
+    op: SyncOp,
+    reason: MigrateReason,
+) -> MigrateAction {
     let mut leaves = Vec::new();
     if c.is_dir {
         collect_copy_leaves(c, &mut leaves);
@@ -180,7 +201,10 @@ pub(crate) fn delete_subtree_action(c: &DiffEntry, op: SyncOp) -> MigrateAction 
     let mut leaves = Vec::new();
     if c.is_dir {
         collect_delete_leaves(c, &mut leaves); // children bottom-up
-        leaves.push(LeafOp { rel_path: c.rel_path.components().to_vec(), is_dir: true }); // root dir last
+        leaves.push(LeafOp {
+            rel_path: c.rel_path.components().to_vec(),
+            is_dir: true,
+        }); // root dir last
     }
     MigrateAction {
         rel_path: c.rel_path.components().to_vec(),
@@ -200,14 +224,22 @@ pub(crate) fn collect_migrate(node: &DiffEntry, flags: MigrateFlags, out: &mut V
         match c.status {
             DiffStatus::LeftOnly => {
                 if flags.copy_new {
-                    out.push(copy_subtree_action(c, SyncOp::CopyLeftToRight, MigrateReason::New));
+                    out.push(copy_subtree_action(
+                        c,
+                        SyncOp::CopyLeftToRight,
+                        MigrateReason::New,
+                    ));
                 }
             }
             DiffStatus::Different => {
                 if c.is_dir {
                     collect_migrate(c, flags, out);
                 } else if flags.overwrite_different {
-                    out.push(copy_subtree_action(c, SyncOp::CopyLeftToRight, MigrateReason::Different));
+                    out.push(copy_subtree_action(
+                        c,
+                        SyncOp::CopyLeftToRight,
+                        MigrateReason::Different,
+                    ));
                 }
             }
             DiffStatus::RightOnly => {
@@ -268,12 +300,14 @@ pub(crate) fn resolve_conflict(c: &DiffEntry, flags: SyncFlags) -> Option<SyncOp
         (false, false) => None,                         // no authority (UI prevents this)
         (true, true) => match flags.conflict_rule {
             ConflictRule::Manual => None,
-            ConflictRule::Newer => {
-                pick_by(c.left.as_ref().and_then(|m| m.mtime), c.right.as_ref().and_then(|m| m.mtime))
-            }
-            ConflictRule::Larger => {
-                pick_by(c.left.as_ref().map(|m| m.size), c.right.as_ref().map(|m| m.size))
-            }
+            ConflictRule::Newer => pick_by(
+                c.left.as_ref().and_then(|m| m.mtime),
+                c.right.as_ref().and_then(|m| m.mtime),
+            ),
+            ConflictRule::Larger => pick_by(
+                c.left.as_ref().map(|m| m.size),
+                c.right.as_ref().map(|m| m.size),
+            ),
         },
     }
 }
@@ -295,14 +329,22 @@ pub(crate) fn collect_sync(node: &DiffEntry, flags: SyncFlags, out: &mut Vec<Mig
         match c.status {
             DiffStatus::LeftOnly => {
                 if flags.trust_left {
-                    out.push(copy_subtree_action(c, SyncOp::CopyLeftToRight, MigrateReason::New));
+                    out.push(copy_subtree_action(
+                        c,
+                        SyncOp::CopyLeftToRight,
+                        MigrateReason::New,
+                    ));
                 } else if flags.trust_right && flags.delete_diffs {
                     out.push(delete_subtree_action(c, SyncOp::DeleteLeft));
                 }
             }
             DiffStatus::RightOnly => {
                 if flags.trust_right {
-                    out.push(copy_subtree_action(c, SyncOp::CopyRightToLeft, MigrateReason::New));
+                    out.push(copy_subtree_action(
+                        c,
+                        SyncOp::CopyRightToLeft,
+                        MigrateReason::New,
+                    ));
                 } else if flags.trust_left && flags.delete_diffs {
                     out.push(delete_subtree_action(c, SyncOp::DeleteRight));
                 }
@@ -378,10 +420,26 @@ pub(crate) fn run_plan(
         Ok(report) => {
             // Emit the exact final count so the throttled counter lands on the true total instead of
             // freezing at the last multiple of 256 (the tail < 256 entries emit no progress event).
-            let _ = app.emit(PLAN_PROGRESS, PlanProgress { token, examined: examined.load(Ordering::Relaxed) });
-            PlanReady { token, flow, actions: collect(&report.root), error: None }
+            let _ = app.emit(
+                PLAN_PROGRESS,
+                PlanProgress {
+                    token,
+                    examined: examined.load(Ordering::Relaxed),
+                },
+            );
+            PlanReady {
+                token,
+                flow,
+                actions: collect(&report.root),
+                error: None,
+            }
         }
-        Err(e) => PlanReady { token, flow, actions: Vec::new(), error: Some(e.to_string()) },
+        Err(e) => PlanReady {
+            token,
+            flow,
+            actions: Vec::new(),
+            error: Some(e.to_string()),
+        },
     };
     let _ = app.emit(PLAN_READY, payload);
 }
@@ -407,11 +465,20 @@ pub(crate) fn migrate_actions(
     let r = cached_source(&state, &right)?;
     let plan_token = Arc::clone(&state.plan_token);
     std::thread::spawn(move || {
-        run_plan(&app, l.as_ref(), r.as_ref(), &cfg, "migrate", token, &plan_token, |root| {
-            let mut actions = Vec::new();
-            collect_migrate(root, flags, &mut actions);
-            actions
-        });
+        run_plan(
+            &app,
+            l.as_ref(),
+            r.as_ref(),
+            &cfg,
+            "migrate",
+            token,
+            &plan_token,
+            |root| {
+                let mut actions = Vec::new();
+                collect_migrate(root, flags, &mut actions);
+                actions
+            },
+        );
     });
     Ok(())
 }
@@ -440,11 +507,20 @@ pub(crate) fn sync_actions(
     let r = cached_source(&state, &right)?;
     let plan_token = Arc::clone(&state.plan_token);
     std::thread::spawn(move || {
-        run_plan(&app, l.as_ref(), r.as_ref(), &cfg, "sync", token, &plan_token, |root| {
-            let mut actions = Vec::new();
-            collect_sync(root, flags, &mut actions);
-            actions
-        });
+        run_plan(
+            &app,
+            l.as_ref(),
+            r.as_ref(),
+            &cfg,
+            "sync",
+            token,
+            &plan_token,
+            |root| {
+                let mut actions = Vec::new();
+                collect_sync(root, flags, &mut actions);
+                actions
+            },
+        );
     });
     Ok(())
 }

@@ -1,26 +1,31 @@
 #[allow(unused_imports)]
-use crate::sources::*;
-#[allow(unused_imports)]
-use crate::plan::*;
-#[allow(unused_imports)]
 use crate::apply::*;
 #[allow(unused_imports)]
 use crate::diff::*;
 #[allow(unused_imports)]
-use crate::{ENTRY_RESOLVED, MIGRATE_PROGRESS, MIGRATE_DONE, MIGRATE_PHASE, PLAN_PROGRESS, PLAN_READY};
+use crate::plan::*;
+#[allow(unused_imports)]
+use crate::sources::*;
+#[allow(unused_imports)]
+use crate::{
+    ENTRY_RESOLVED, MIGRATE_DONE, MIGRATE_PHASE, MIGRATE_PROGRESS, PLAN_PROGRESS, PLAN_READY,
+};
 
 #[allow(unused_imports)]
 use confold_core::{
     compare as engine_compare, compare_at_with_progress as engine_compare_with_progress,
-    compare_file as engine_compare_file, full_equal, list_level as engine_list_level,
-    Capabilities, CompareConfig, CompareMethod, ContentReader, DiffEntry, DiffReport, DiffStatus,
-    EntryMeta, FilterSet, LocalSource, RelPath, Source, SourceError, SourceMut,
-    DEFAULT_LARGE_FILE_THRESHOLD,
+    compare_file as engine_compare_file, full_equal, list_level as engine_list_level, Capabilities,
+    CompareConfig, CompareMethod, ContentReader, DiffEntry, DiffReport, DiffStatus, EntryMeta,
+    FilterSet, LocalSource, RelPath, Source, SourceError, SourceMut, DEFAULT_LARGE_FILE_THRESHOLD,
 };
 #[allow(unused_imports)]
 use confold_s3::{S3Config, S3Source};
 #[allow(unused_imports)]
 use confold_sftp::{SftpAuth, SftpConfig, SftpSource};
+#[allow(unused_imports)]
+use confold_sync::{apply as sync_apply, ActionOutcome, SyncAction, SyncOp};
+#[allow(unused_imports)]
+use confold_textdiff::{diff_hunks, diff_text, is_binary_bytes, FileDiff, FileDiffHunks};
 #[allow(unused_imports)]
 use serde::{Deserialize, Serialize};
 #[allow(unused_imports)]
@@ -31,10 +36,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 #[allow(unused_imports)]
 use tauri::{AppHandle, Emitter, State};
-#[allow(unused_imports)]
-use confold_sync::{apply as sync_apply, ActionOutcome, SyncAction, SyncOp};
-#[allow(unused_imports)]
-use confold_textdiff::{diff_text, diff_hunks, is_binary_bytes, FileDiff, FileDiffHunks};
 
 /// Result of probing a source: reachable? and (if so) is the root a directory (tree compare) or a single
 /// file (file diff)? Drives the picker's ✓/✗ connection check and folder-vs-file inference.
@@ -163,7 +164,6 @@ pub(crate) fn read_capped(file: &FileRef, cap: u64) -> Result<Vec<u8>, String> {
     Ok(read_all(reader.as_ref()))
 }
 
-
 /// `(mtime, created)` for the file at `rel`: list its parent directory and match the leaf name. Returns
 /// `(None, None)` if it can't be determined (missing file, parent not listable, or `rel` is the root).
 pub(crate) fn file_dates(src: &dyn Source, rel: &RelPath) -> (Option<i64>, Option<i64>) {
@@ -225,7 +225,6 @@ pub(crate) fn parse_method(s: &str) -> CompareMethod {
     }
 }
 
-
 /// Shared backend state: a cache of connected read sources (so lazy level-by-level comparison reuses
 /// ONE connection for the whole tree — a single SFTP/SSH session — instead of reconnecting on every
 /// expand) plus the current comparison `token`. Bumping the token cancels stale background resolvers.
@@ -261,7 +260,10 @@ pub(crate) fn cache_key(spec: &SourceSpec) -> String {
 
 /// Return the cached source for `spec`, connecting (and caching) on a miss. The lock is held across
 /// the connect so concurrent expands racing on the same miss connect once, not N times.
-pub(crate) fn cached_source(state: &AppState, spec: &SourceSpec) -> Result<Arc<dyn Source>, String> {
+pub(crate) fn cached_source(
+    state: &AppState,
+    spec: &SourceSpec,
+) -> Result<Arc<dyn Source>, String> {
     let key = cache_key(spec);
     let mut map = state
         .cache
@@ -326,7 +328,8 @@ pub(crate) fn run_scan(
                 if cancel.load(Ordering::SeqCst) != token {
                     return; // a newer comparison started — stop resolving the stale one.
                 }
-                let (status, detail) = engine_compare_file(l.as_ref(), r.as_ref(), &lm, &rm, &rel, &cfg);
+                let (status, detail) =
+                    engine_compare_file(l.as_ref(), r.as_ref(), &lm, &rm, &rel, &cfg);
                 let _ = app.emit(
                     ENTRY_RESOLVED,
                     EntryResolved {
@@ -373,5 +376,13 @@ pub(crate) fn compare_level(
     rel: String,
     token: u64,
 ) -> Result<DiffReport, String> {
-    run_scan(&state, &app, &left, &right, &opts, &rel_from_str(&rel), token)
+    run_scan(
+        &state,
+        &app,
+        &left,
+        &right,
+        &opts,
+        &rel_from_str(&rel),
+        token,
+    )
 }

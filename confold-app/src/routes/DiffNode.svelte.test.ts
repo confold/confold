@@ -95,6 +95,18 @@ describe("DiffNode interaction", () => {
     expect(onopen).toHaveBeenCalledWith(entry);
   });
 
+  it("offers semantic review without also opening the normal comparison", async () => {
+    const onopen = vi.fn();
+    const onsemantic = vi.fn();
+    const entry = fileEntry();
+    render(DiffNode, { entry, onopen, onsemantic, semantic: true });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Review f.txt with AI" }));
+
+    expect(onsemantic).toHaveBeenCalledWith(entry);
+    expect(onopen).not.toHaveBeenCalled();
+  });
+
   it("double-clicking a file also calls onopen (single-click already opens, dblclick is a no-op)", async () => {
     const onopen = vi.fn();
     const entry = fileEntry();

@@ -1,26 +1,31 @@
 #[allow(unused_imports)]
-use crate::scan::*;
-#[allow(unused_imports)]
-use crate::plan::*;
-#[allow(unused_imports)]
 use crate::apply::*;
 #[allow(unused_imports)]
 use crate::diff::*;
 #[allow(unused_imports)]
-use crate::{ENTRY_RESOLVED, MIGRATE_PROGRESS, MIGRATE_DONE, MIGRATE_PHASE, PLAN_PROGRESS, PLAN_READY};
+use crate::plan::*;
+#[allow(unused_imports)]
+use crate::scan::*;
+#[allow(unused_imports)]
+use crate::{
+    ENTRY_RESOLVED, MIGRATE_DONE, MIGRATE_PHASE, MIGRATE_PROGRESS, PLAN_PROGRESS, PLAN_READY,
+};
 
 #[allow(unused_imports)]
 use confold_core::{
     compare as engine_compare, compare_at_with_progress as engine_compare_with_progress,
-    compare_file as engine_compare_file, full_equal, list_level as engine_list_level,
-    Capabilities, CompareConfig, CompareMethod, ContentReader, DiffEntry, DiffReport, DiffStatus,
-    EntryMeta, FilterSet, LocalSource, RelPath, Source, SourceError, SourceMut,
-    DEFAULT_LARGE_FILE_THRESHOLD,
+    compare_file as engine_compare_file, full_equal, list_level as engine_list_level, Capabilities,
+    CompareConfig, CompareMethod, ContentReader, DiffEntry, DiffReport, DiffStatus, EntryMeta,
+    FilterSet, LocalSource, RelPath, Source, SourceError, SourceMut, DEFAULT_LARGE_FILE_THRESHOLD,
 };
 #[allow(unused_imports)]
 use confold_s3::{S3Config, S3Source};
 #[allow(unused_imports)]
 use confold_sftp::{SftpAuth, SftpConfig, SftpSource};
+#[allow(unused_imports)]
+use confold_sync::{apply as sync_apply, ActionOutcome, SyncAction, SyncOp};
+#[allow(unused_imports)]
+use confold_textdiff::{diff_hunks, diff_text, is_binary_bytes, FileDiff, FileDiffHunks};
 #[allow(unused_imports)]
 use serde::{Deserialize, Serialize};
 #[allow(unused_imports)]
@@ -31,10 +36,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 #[allow(unused_imports)]
 use tauri::{AppHandle, Emitter, State};
-#[allow(unused_imports)]
-use confold_sync::{apply as sync_apply, ActionOutcome, SyncAction, SyncOp};
-#[allow(unused_imports)]
-use confold_textdiff::{diff_text, diff_hunks, is_binary_bytes, FileDiff, FileDiffHunks};
 
 /// A data source chosen in the UI: a registered kind id + flat config values. The generic wire DTO —
 /// construction goes through the `SourceKind` registry below. Adding a backend never touches this type.

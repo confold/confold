@@ -26,8 +26,11 @@ serde_json = "1"
 confold-core = { path = "../../crates/confold-core" }
 confold-sync = { path = "../../crates/confold-sync" }
 confold-textdiff = { path = "../../crates/confold-textdiff" }
+confold-provider = { path = "../../crates/confold-provider" }
+confold-semantic = { path = "../../crates/confold-semantic" }
 confold-sftp = { path = "../../crates/confold-sftp" }
 confold-s3 = { path = "../../crates/confold-s3" }
+keyring = "4.1"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }

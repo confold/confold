@@ -3,8 +3,10 @@
 mod apply;
 mod diff;
 mod plan;
+mod provider;
 mod recents;
 mod scan;
+mod semantic;
 mod shell;
 mod sources;
 
@@ -12,15 +14,18 @@ mod sources;
 #[allow(unused_imports)]
 use confold_core::{
     compare as engine_compare, compare_at_with_progress as engine_compare_with_progress,
-    compare_file as engine_compare_file, full_equal, list_level as engine_list_level,
-    Capabilities, CompareConfig, CompareMethod, ContentReader, DiffEntry, DiffReport, DiffStatus,
-    EntryMeta, FilterSet, LocalSource, RelPath, Source, SourceError, SourceMut,
-    DEFAULT_LARGE_FILE_THRESHOLD,
+    compare_file as engine_compare_file, full_equal, list_level as engine_list_level, Capabilities,
+    CompareConfig, CompareMethod, ContentReader, DiffEntry, DiffReport, DiffStatus, EntryMeta,
+    FilterSet, LocalSource, RelPath, Source, SourceError, SourceMut, DEFAULT_LARGE_FILE_THRESHOLD,
 };
 #[allow(unused_imports)]
 use confold_s3::{S3Config, S3Source};
 #[allow(unused_imports)]
 use confold_sftp::{SftpAuth, SftpConfig, SftpSource};
+#[allow(unused_imports)]
+use confold_sync::{apply as sync_apply, ActionOutcome, SyncAction, SyncOp};
+#[allow(unused_imports)]
+use confold_textdiff::{diff_hunks, diff_text, is_binary_bytes, FileDiff, FileDiffHunks};
 #[allow(unused_imports)]
 use serde::{Deserialize, Serialize};
 #[allow(unused_imports)]
@@ -31,10 +36,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 #[allow(unused_imports)]
 use tauri::{AppHandle, Emitter, State};
-#[allow(unused_imports)]
-use confold_sync::{apply as sync_apply, ActionOutcome, SyncAction, SyncOp};
-#[allow(unused_imports)]
-use confold_textdiff::{diff_text, diff_hunks, is_binary_bytes, FileDiff, FileDiffHunks};
 
 // ── Event name constants — shared across modules ────────────────────────────────────────────────
 pub(crate) const ENTRY_RESOLVED: &str = "entry-resolved";
@@ -44,18 +45,25 @@ pub(crate) const MIGRATE_PHASE: &str = "migrate-phase";
 pub(crate) const PLAN_PROGRESS: &str = "plan-progress";
 pub(crate) const PLAN_READY: &str = "plan-ready";
 
-
 #[cfg(test)]
 #[allow(unused_imports)]
 use {apply::*, diff::*, plan::*, scan::*, sources::*};
 
-
-use scan::{AppState, compare, compare_level, test_source};
+use apply::{apply_actions, migrate_apply, migrate_cancel, plan_actions};
+use diff::{
+    diff_file, diff_file_large, diff_strings, hex_compare, read_bytes, save_file, source_types,
+};
 use plan::{migrate_actions, sync_actions};
-use apply::{migrate_apply, migrate_cancel, plan_actions, apply_actions};
-use diff::{diff_file, diff_file_large, diff_strings, save_file, hex_compare, read_bytes, source_types};
-use shell::{install_shell_integration, uninstall_shell_integration, shell_integration_status};
-use recents::{load_recents, save_recents, path_exists};
+use provider::{
+    list_provider_models, load_provider_settings, save_provider_settings, test_provider_capability,
+};
+use recents::{load_recents, path_exists, save_recents};
+use scan::{compare, compare_level, test_source, AppState};
+use semantic::{
+    load_semantic_preferences, save_semantic_preferences, semantic_apply_new, semantic_apply_to,
+    semantic_review,
+};
+use shell::{install_shell_integration, shell_integration_status, uninstall_shell_integration};
 
 pub fn run() {
     let mut builder = tauri::Builder::default()
@@ -71,12 +79,37 @@ pub fn run() {
     builder
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
-            compare, compare_level, test_source,
-            migrate_actions, sync_actions,
-            migrate_apply, migrate_cancel, plan_actions, apply_actions,
-            diff_file, diff_file_large, diff_strings, save_file, hex_compare, read_bytes, source_types,
-            install_shell_integration, uninstall_shell_integration, shell_integration_status,
-            load_recents, save_recents, path_exists,
+            compare,
+            compare_level,
+            test_source,
+            migrate_actions,
+            sync_actions,
+            migrate_apply,
+            migrate_cancel,
+            plan_actions,
+            apply_actions,
+            diff_file,
+            diff_file_large,
+            diff_strings,
+            save_file,
+            hex_compare,
+            read_bytes,
+            source_types,
+            install_shell_integration,
+            uninstall_shell_integration,
+            shell_integration_status,
+            load_recents,
+            save_recents,
+            path_exists,
+            load_provider_settings,
+            save_provider_settings,
+            list_provider_models,
+            test_provider_capability,
+            load_semantic_preferences,
+            save_semantic_preferences,
+            semantic_review,
+            semantic_apply_to,
+            semantic_apply_new,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -125,8 +158,12 @@ mod tests {
             recursive: true,
             filters: FilterSet::default(),
         };
-        let report =
-            engine_compare(&LocalSource::new(l.path()), &LocalSource::new(r.path()), &cfg).unwrap();
+        let report = engine_compare(
+            &LocalSource::new(l.path()),
+            &LocalSource::new(r.path()),
+            &cfg,
+        )
+        .unwrap();
 
         let key = |a: &MigrateAction| a.rel_path.join("/");
         let collect = |flags: MigrateFlags| {
@@ -194,11 +231,34 @@ mod tests {
         // Origin with two files and a subtree; destination empty.
         let l = tempfile::tempdir().unwrap();
         let actions = vec![
-            MigrateAction { rel_path: vec!["a.txt".to_string()], op: SyncOp::CopyLeftToRight, is_dir: false, reason: MigrateReason::New, item_count: 1, leaves: vec![] },
-            MigrateAction { rel_path: vec!["b.txt".to_string()], op: SyncOp::CopyLeftToRight, is_dir: false, reason: MigrateReason::New, item_count: 1, leaves: vec![] },
+            MigrateAction {
+                rel_path: vec!["a.txt".to_string()],
+                op: SyncOp::CopyLeftToRight,
+                is_dir: false,
+                reason: MigrateReason::New,
+                item_count: 1,
+                leaves: vec![],
+            },
+            MigrateAction {
+                rel_path: vec!["b.txt".to_string()],
+                op: SyncOp::CopyLeftToRight,
+                is_dir: false,
+                reason: MigrateReason::New,
+                item_count: 1,
+                leaves: vec![],
+            },
             // Directory with pre-expanded leaves (the c.txt file inside).
-            MigrateAction { rel_path: vec!["d".to_string()], op: SyncOp::CopyLeftToRight, is_dir: true, reason: MigrateReason::New, item_count: 2,
-                leaves: vec![LeafOp { rel_path: vec!["d".to_string(), "c.txt".to_string()], is_dir: false }] },
+            MigrateAction {
+                rel_path: vec!["d".to_string()],
+                op: SyncOp::CopyLeftToRight,
+                is_dir: true,
+                reason: MigrateReason::New,
+                item_count: 2,
+                leaves: vec![LeafOp {
+                    rel_path: vec!["d".to_string(), "c.txt".to_string()],
+                    is_dir: false,
+                }],
+            },
         ];
         fs::write(l.path().join("a.txt"), b"A").unwrap();
         fs::write(l.path().join("b.txt"), b"B").unwrap();
@@ -210,9 +270,13 @@ mod tests {
         let r = tempfile::tempdir().unwrap();
         let right = LocalSource::new(r.path());
         let mut seen: Vec<(String, bool)> = Vec::new();
-        let summary = run_migrate(&left, &right, &actions, || false, |o, _reason| {
-            seen.push((o.rel_path.components().join("/"), o.ok))
-        });
+        let summary = run_migrate(
+            &left,
+            &right,
+            &actions,
+            || false,
+            |o, _reason| seen.push((o.rel_path.components().join("/"), o.ok)),
+        );
         assert!(!summary.cancelled);
         assert_eq!(summary.failed, 0);
         assert_eq!(fs::read(r.path().join("a.txt")).unwrap(), b"A");
@@ -263,13 +327,13 @@ mod tests {
         let actions = vec![new("ok1.txt"), new("ghost.txt"), new("ok2.txt")];
 
         let mut outcomes: Vec<(String, bool, Option<String>)> = Vec::new();
-        let summary = run_migrate(&left, &right, &actions, || false, |o, _reason| {
-            outcomes.push((
-                o.rel_path.components().join("/"),
-                o.ok,
-                o.error.clone(),
-            ))
-        });
+        let summary = run_migrate(
+            &left,
+            &right,
+            &actions,
+            || false,
+            |o, _reason| outcomes.push((o.rel_path.components().join("/"), o.ok, o.error.clone())),
+        );
 
         // Tally: three attempted, two ok, one failed, not cancelled.
         assert!(!summary.cancelled);
@@ -280,7 +344,10 @@ mod tests {
         // The failed item is reported with ok:false AND a non-empty error string.
         let ghost = outcomes.iter().find(|(p, ..)| p == "ghost.txt").unwrap();
         assert!(!ghost.1, "ghost.txt should have failed");
-        assert!(ghost.2.as_deref().is_some_and(|e| !e.is_empty()), "expected an error message");
+        assert!(
+            ghost.2.as_deref().is_some_and(|e| !e.is_empty()),
+            "expected an error message"
+        );
 
         // The run kept going: the action AFTER the failure still applied to the destination.
         assert_eq!(fs::read(r.path().join("ok1.txt")).unwrap(), b"1");
@@ -307,8 +374,14 @@ mod tests {
             reason: MigrateReason::New,
             item_count: 2,
             leaves: vec![
-                LeafOp { rel_path: vec!["d".to_string(), "f1.txt".to_string()], is_dir: false },
-                LeafOp { rel_path: vec!["d".to_string(), "f2.txt".to_string()], is_dir: false },
+                LeafOp {
+                    rel_path: vec!["d".to_string(), "f1.txt".to_string()],
+                    is_dir: false,
+                },
+                LeafOp {
+                    rel_path: vec!["d".to_string(), "f2.txt".to_string()],
+                    is_dir: false,
+                },
             ],
         }];
 
@@ -333,7 +406,7 @@ mod tests {
         fs::create_dir(r.path().join("d")).unwrap();
         fs::write(r.path().join("d").join("f1.txt"), b"F1").unwrap();
         fs::write(r.path().join("d").join("f2.txt"), b"F2").unwrap();
-        let left  = LocalSource::new(r.path()); // unused for delete but required by signature
+        let left = LocalSource::new(r.path()); // unused for delete but required by signature
         let right = LocalSource::new(r.path());
 
         let actions = vec![MigrateAction {
@@ -343,22 +416,33 @@ mod tests {
             reason: MigrateReason::Extra,
             item_count: 2,
             leaves: vec![
-                LeafOp { rel_path: vec!["d".to_string(), "f1.txt".to_string()], is_dir: false },
-                LeafOp { rel_path: vec!["d".to_string(), "f2.txt".to_string()], is_dir: false },
-                LeafOp { rel_path: vec!["d".to_string()], is_dir: true },
+                LeafOp {
+                    rel_path: vec!["d".to_string(), "f1.txt".to_string()],
+                    is_dir: false,
+                },
+                LeafOp {
+                    rel_path: vec!["d".to_string(), "f2.txt".to_string()],
+                    is_dir: false,
+                },
+                LeafOp {
+                    rel_path: vec!["d".to_string()],
+                    is_dir: true,
+                },
             ],
         }];
 
         let applied = std::cell::Cell::new(0usize);
         let summary = run_migrate(
-            &left, &right, &actions,
+            &left,
+            &right,
+            &actions,
             || applied.get() >= 1,
             |_, _| applied.set(applied.get() + 1),
         );
         assert!(summary.cancelled);
         assert!(!r.path().join("d").join("f1.txt").exists()); // first file deleted
-        assert!(r.path().join("d").join("f2.txt").exists());  // second survived
-        assert!(r.path().join("d").exists());                 // dir still there (not yet deleted)
+        assert!(r.path().join("d").join("f2.txt").exists()); // second survived
+        assert!(r.path().join("d").exists()); // dir still there (not yet deleted)
     }
 
     // ── M2: move semantics (delete origin after verified-complete migration) ─────────────────────
@@ -408,7 +492,11 @@ mod tests {
         assert_eq!(summary.dirs_pruned, 1); // d
         assert_eq!(summary.failed, 0);
         // The whole origin is gone; the destination is untouched.
-        assert_eq!(fs::read_dir(l.path()).unwrap().count(), 0, "origin not empty");
+        assert_eq!(
+            fs::read_dir(l.path()).unwrap().count(),
+            0,
+            "origin not empty"
+        );
         assert!(r.path().join("a.txt").exists() && r.path().join("d").join("c.txt").exists());
         assert!(deleted.contains(&"d/c.txt".to_string()) && deleted.contains(&"d".to_string()));
     }
@@ -425,9 +513,15 @@ mod tests {
         let left = LocalSource::new(l.path());
         let right = LocalSource::new(r.path());
 
-        let summary = move_origin(&left, &right, FilterSet::default(), || false, |_| {
-            panic!("nothing must be deleted when the move is blocked");
-        })
+        let summary = move_origin(
+            &left,
+            &right,
+            FilterSet::default(),
+            || false,
+            |_| {
+                panic!("nothing must be deleted when the move is blocked");
+            },
+        )
         .unwrap();
 
         assert!(!summary.origin_deleted);
@@ -458,20 +552,34 @@ mod tests {
         let left = LocalSource::new(l.path());
         let right = LocalSource::new(r.path());
 
-        let summary =
-            move_origin(&left, &right, FilterSet::new(&[], &["*.log".to_string()]).unwrap(), || false, |o| {
+        let summary = move_origin(
+            &left,
+            &right,
+            FilterSet::new(&[], &["*.log".to_string()]).unwrap(),
+            || false,
+            |o| {
                 assert!(o.ok, "delete failed: {:?}", o.error);
-            })
-            .unwrap();
+            },
+        )
+        .unwrap();
 
-        assert!(summary.origin_deleted, "excluded file must not block the move");
+        assert!(
+            summary.origin_deleted,
+            "excluded file must not block the move"
+        );
         assert!(summary.blockers.is_empty());
         assert_eq!(summary.files_deleted, 2); // move.txt + d/data.bin
         assert_eq!(summary.dirs_pruned, 0); // d kept (still holds keep.log)
         assert!(!l.path().join("move.txt").exists());
         assert!(!l.path().join("d").join("data.bin").exists());
-        assert!(l.path().join("d").join("keep.log").exists(), "excluded file must survive");
-        assert!(l.path().join("d").exists(), "dir with a survivor must not be pruned");
+        assert!(
+            l.path().join("d").join("keep.log").exists(),
+            "excluded file must survive"
+        );
+        assert!(
+            l.path().join("d").exists(),
+            "dir with a survivor must not be pruned"
+        );
     }
 
     #[test]
@@ -484,9 +592,15 @@ mod tests {
         let left = LocalSource::new(l.path());
         let right = LocalSource::new(r.path());
 
-        let summary = move_origin(&left, &right, FilterSet::default(), || true, |_| {
-            panic!("nothing must be deleted once cancelled");
-        })
+        let summary = move_origin(
+            &left,
+            &right,
+            FilterSet::default(),
+            || true,
+            |_| {
+                panic!("nothing must be deleted once cancelled");
+            },
+        )
         .unwrap();
 
         assert!(summary.cancelled);
@@ -520,18 +634,32 @@ mod tests {
         let report = reverify(l.path(), r.path(), &["*.log"]);
         let plan = plan_origin_delete(&report.root);
 
-        let files: Vec<String> = plan.files.iter().map(|p| p.components().join("/")).collect();
+        let files: Vec<String> = plan
+            .files
+            .iter()
+            .map(|p| p.components().join("/"))
+            .collect();
         let dirs: Vec<String> = plan.dirs.iter().map(|p| p.components().join("/")).collect();
-        let blockers: Vec<(String, &str)> =
-            plan.blockers.iter().map(|b| (b.rel_path.join("/"), b.reason)).collect();
+        let blockers: Vec<(String, &str)> = plan
+            .blockers
+            .iter()
+            .map(|b| (b.rel_path.join("/"), b.reason))
+            .collect();
 
         assert!(files.contains(&"same.txt".to_string()));
         assert!(files.contains(&"kept/inner.txt".to_string()));
-        assert!(!files.iter().any(|f| f == "skip.log"), "excluded file must not be deletable");
+        assert!(
+            !files.iter().any(|f| f == "skip.log"),
+            "excluded file must not be deletable"
+        );
         assert_eq!(dirs, vec!["kept".to_string()]);
         assert_eq!(blockers.len(), 2);
-        assert!(blockers.iter().any(|(p, why)| p == "diff.txt" && *why == "differs in destination"));
-        assert!(blockers.iter().any(|(p, why)| p == "orphan.txt" && *why == "only in origin (not copied)"));
+        assert!(blockers
+            .iter()
+            .any(|(p, why)| p == "diff.txt" && *why == "differs in destination"));
+        assert!(blockers
+            .iter()
+            .any(|(p, why)| p == "orphan.txt" && *why == "only in origin (not copied)"));
     }
 
     // ── Sync (S1): bidirectional reconciliation ─────────────────────────────────────────────────
@@ -571,8 +699,10 @@ mod tests {
 
     /// (path, op) pairs, sorted — the shape we assert against.
     fn ops(actions: &[MigrateAction]) -> Vec<(String, SyncOp)> {
-        let mut v: Vec<(String, SyncOp)> =
-            actions.iter().map(|a| (a.rel_path.join("/"), a.op)).collect();
+        let mut v: Vec<(String, SyncOp)> = actions
+            .iter()
+            .map(|a| (a.rel_path.join("/"), a.op))
+            .collect();
         v.sort_by(|a, b| a.0.cmp(&b.0));
         v
     }
@@ -666,7 +796,10 @@ mod tests {
         );
 
         // Manual → the conflict is omitted (left for the user to resolve in Compare); copies still flow.
-        let manual = SyncFlags { conflict_rule: ConflictRule::Manual, ..larger };
+        let manual = SyncFlags {
+            conflict_rule: ConflictRule::Manual,
+            ..larger
+        };
         let plan = sync_plan(l.path(), r.path(), manual);
         assert!(!plan.iter().any(|a| a.rel_path.join("/") == "conflict.txt"));
         assert_eq!(plan.len(), 4); // the four one-sided copies, no conflict
@@ -703,9 +836,15 @@ mod tests {
 
         // Newer wins by mtime; equal/unknown mtime → manual (None).
         let e = entry(1, Some(200), 1, Some(100));
-        assert_eq!(resolve_conflict(&e, both(ConflictRule::Newer)), Some(SyncOp::CopyLeftToRight));
+        assert_eq!(
+            resolve_conflict(&e, both(ConflictRule::Newer)),
+            Some(SyncOp::CopyLeftToRight)
+        );
         let e = entry(1, Some(100), 1, Some(200));
-        assert_eq!(resolve_conflict(&e, both(ConflictRule::Newer)), Some(SyncOp::CopyRightToLeft));
+        assert_eq!(
+            resolve_conflict(&e, both(ConflictRule::Newer)),
+            Some(SyncOp::CopyRightToLeft)
+        );
         let e = entry(1, Some(100), 1, Some(100));
         assert_eq!(resolve_conflict(&e, both(ConflictRule::Newer)), None); // tie
         let e = entry(1, None, 1, Some(100));
@@ -713,7 +852,10 @@ mod tests {
 
         // Larger wins by size; equal size → manual.
         let e = entry(10, None, 5, None);
-        assert_eq!(resolve_conflict(&e, both(ConflictRule::Larger)), Some(SyncOp::CopyLeftToRight));
+        assert_eq!(
+            resolve_conflict(&e, both(ConflictRule::Larger)),
+            Some(SyncOp::CopyLeftToRight)
+        );
         let e = entry(5, None, 5, None);
         assert_eq!(resolve_conflict(&e, both(ConflictRule::Larger)), None); // tie
 
@@ -723,13 +865,29 @@ mod tests {
 
         // One-sided trust: the trusted side always wins, regardless of metadata or rule.
         let e = entry(1, Some(100), 999, Some(999));
-        let left_only = SyncFlags { trust_right: false, ..both(ConflictRule::Newer) };
-        assert_eq!(resolve_conflict(&e, left_only), Some(SyncOp::CopyLeftToRight));
-        let right_only = SyncFlags { trust_left: false, ..both(ConflictRule::Newer) };
-        assert_eq!(resolve_conflict(&e, right_only), Some(SyncOp::CopyRightToLeft));
+        let left_only = SyncFlags {
+            trust_right: false,
+            ..both(ConflictRule::Newer)
+        };
+        assert_eq!(
+            resolve_conflict(&e, left_only),
+            Some(SyncOp::CopyLeftToRight)
+        );
+        let right_only = SyncFlags {
+            trust_left: false,
+            ..both(ConflictRule::Newer)
+        };
+        assert_eq!(
+            resolve_conflict(&e, right_only),
+            Some(SyncOp::CopyRightToLeft)
+        );
 
         // Neither trusted → nothing (the UI prevents this state).
-        let neither = SyncFlags { trust_left: false, trust_right: false, ..both(ConflictRule::Newer) };
+        let neither = SyncFlags {
+            trust_left: false,
+            trust_right: false,
+            ..both(ConflictRule::Newer)
+        };
         assert_eq!(resolve_conflict(&e, neither), None);
     }
 
@@ -765,12 +923,16 @@ mod tests {
         fs::write(dir.path().join("here.txt"), b"hi").unwrap();
         let src = LocalSource::new(dir.path());
         assert_eq!(
-            read_side_cached(&src, &rel_from_str("here.txt"), TEXT_CAP).unwrap().0,
+            read_side_cached(&src, &rel_from_str("here.txt"), TEXT_CAP)
+                .unwrap()
+                .0,
             b"hi"
         );
         // A missing file (present on only one side) reads as empty, not an error.
         assert_eq!(
-            read_side_cached(&src, &rel_from_str("gone.txt"), TEXT_CAP).unwrap().0,
+            read_side_cached(&src, &rel_from_str("gone.txt"), TEXT_CAP)
+                .unwrap()
+                .0,
             Vec::<u8>::new()
         );
     }
@@ -791,7 +953,8 @@ mod tests {
         let src = LocalSource::new(dir.path());
         fs::write(dir.path().join("a.txt"), "x\ny\n").unwrap();
         fs::write(dir.path().join("b.txt"), "x\nz\n").unwrap();
-        let res = diff_file_inner(&src, &rel_from_str("a.txt"), &src, &rel_from_str("b.txt")).unwrap();
+        let res =
+            diff_file_inner(&src, &rel_from_str("a.txt"), &src, &rel_from_str("b.txt")).unwrap();
         assert!(matches!(res.result, DiffResult::Text { .. }));
         assert!(!res.left.fp.is_empty() && !res.right.fp.is_empty());
 
@@ -810,10 +973,25 @@ mod tests {
     fn diff_file_signals_too_large() {
         let dir = tempfile::tempdir().unwrap();
         let src = LocalSource::new(dir.path());
-        fs::write(dir.path().join("big.txt"), vec![b'a'; (TEXT_CAP + 1) as usize]).unwrap();
+        fs::write(
+            dir.path().join("big.txt"),
+            vec![b'a'; (TEXT_CAP + 1) as usize],
+        )
+        .unwrap();
         fs::write(dir.path().join("small.txt"), b"hi").unwrap();
-        match diff_file_inner(&src, &rel_from_str("big.txt"), &src, &rel_from_str("small.txt")).unwrap().result {
-            DiffResult::TooLarge { left_size, right_size } => {
+        match diff_file_inner(
+            &src,
+            &rel_from_str("big.txt"),
+            &src,
+            &rel_from_str("small.txt"),
+        )
+        .unwrap()
+        .result
+        {
+            DiffResult::TooLarge {
+                left_size,
+                right_size,
+            } => {
                 assert_eq!(left_size, TEXT_CAP + 1);
                 assert_eq!(right_size, 2);
             }
@@ -951,7 +1129,10 @@ mod tests {
         let s3 = types.iter().find(|t| t.id == "s3").unwrap();
         assert!(!s3.icon.is_empty());
         assert!(s3.fields.iter().any(|f| f.key == "bucket"));
-        assert!(s3.fields.iter().any(|f| f.key == "secret_access_key" && f.secret));
+        assert!(s3
+            .fields
+            .iter()
+            .any(|f| f.key == "secret_access_key" && f.secret));
     }
 
     #[test]
@@ -967,7 +1148,10 @@ mod tests {
         });
         let spec: SourceSpec = serde_json::from_value(json).unwrap();
         assert_eq!(spec.kind, "sftp");
-        assert_eq!(spec.fields.get("host").map(String::as_str), Some("example.com"));
+        assert_eq!(
+            spec.fields.get("host").map(String::as_str),
+            Some("example.com")
+        );
         // Auth maps to the domain type (defaults like port/root are applied at build time, not here).
         assert!(matches!(
             sftp_auth_from_fields(&spec.fields).unwrap(),

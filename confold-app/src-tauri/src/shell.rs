@@ -11,9 +11,9 @@
 //! side is selected. When both are set, the script launches `confold://compare` automatically.
 
 #[allow(unused_imports)]
-use tauri::State;
-#[allow(unused_imports)]
 use std::path::{Path, PathBuf};
+#[allow(unused_imports)]
+use tauri::State;
 
 use crate::scan::AppState;
 
@@ -51,9 +51,12 @@ fn has_confold_workflow(services: &Path) -> bool {
 
 pub(crate) fn cache_dir() -> PathBuf {
     if cfg!(target_os = "windows") {
-        PathBuf::from(std::env::var("LOCALAPPDATA").unwrap_or_else(|_| ".".into())).join(CACHE_DIR_NAME)
+        PathBuf::from(std::env::var("LOCALAPPDATA").unwrap_or_else(|_| ".".into()))
+            .join(CACHE_DIR_NAME)
     } else {
-        PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into())).join(".cache").join(CACHE_DIR_NAME)
+        PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()))
+            .join(".cache")
+            .join(CACHE_DIR_NAME)
     }
 }
 
@@ -69,7 +72,9 @@ fn services_path() -> PathBuf {
 
 #[cfg(target_os = "macos")]
 fn xml_escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 /// Removes all `Confold *.workflow` bundles, copies templates with state-appropriate names,
@@ -122,13 +127,23 @@ fn build_side_script(side: &str) -> String {
     } else {
         ("shell-destination.txt", "shell-origin.txt", "Destination")
     };
-    let enc_self = if side == "origin" { "\"$f\"" } else { "\"$other\"" };
-    let enc_other = if side == "origin" { "\"$other\"" } else { "\"$f\"" };
+    let enc_self = if side == "origin" {
+        "\"$f\""
+    } else {
+        "\"$other\""
+    };
+    let enc_other = if side == "origin" {
+        "\"$other\""
+    } else {
+        "\"$f\""
+    };
 
     #[cfg(target_os = "macos")]
     let (open_cmd, notify_cmd, regenerate) = (
         "/usr/bin/open",
-        format!(r#"/usr/bin/osascript -e 'display notification "{label} selected: '"$f"'" with title "Confold"'"#),
+        format!(
+            r#"/usr/bin/osascript -e 'display notification "{label} selected: '"$f"'" with title "Confold"'"#
+        ),
         r#"  sh "$dir/regenerate_services.sh" 2>/dev/null
 "#,
     );
@@ -396,17 +411,29 @@ fn write_templates() -> Result<(), String> {
 
     let o_contents = tpl.join("origin.workflow/Contents");
     std::fs::create_dir_all(&o_contents).map_err(|e| e.to_string())?;
-    std::fs::write(o_contents.join("Info.plist"), workflow_info_plist("Confold Select Origin", "origin"))
-        .map_err(|e| e.to_string())?;
-    std::fs::write(o_contents.join("document.wflow"), workflow_document_wflow(&origin_script))
-        .map_err(|e| e.to_string())?;
+    std::fs::write(
+        o_contents.join("Info.plist"),
+        workflow_info_plist("Confold Select Origin", "origin"),
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(
+        o_contents.join("document.wflow"),
+        workflow_document_wflow(&origin_script),
+    )
+    .map_err(|e| e.to_string())?;
 
     let d_contents = tpl.join("destination.workflow/Contents");
     std::fs::create_dir_all(&d_contents).map_err(|e| e.to_string())?;
-    std::fs::write(d_contents.join("Info.plist"), workflow_info_plist("Confold Select Destination", "destination"))
-        .map_err(|e| e.to_string())?;
-    std::fs::write(d_contents.join("document.wflow"), workflow_document_wflow(&dest_script))
-        .map_err(|e| e.to_string())?;
+    std::fs::write(
+        d_contents.join("Info.plist"),
+        workflow_info_plist("Confold Select Destination", "destination"),
+    )
+    .map_err(|e| e.to_string())?;
+    std::fs::write(
+        d_contents.join("document.wflow"),
+        workflow_document_wflow(&dest_script),
+    )
+    .map_err(|e| e.to_string())?;
 
     Ok(())
 }
@@ -439,15 +466,26 @@ pub(crate) fn install_shell_integration(_state: State<AppState>) -> Result<(), S
     {
         let origin_script = build_side_script("origin");
         let dest_script = build_side_script("destination");
-        std::fs::write(cache_dir().join("set-origin.sh"), &origin_script).map_err(|e| e.to_string())?;
-        std::fs::write(cache_dir().join("set-destination.sh"), &dest_script).map_err(|e| e.to_string())?;
+        std::fs::write(cache_dir().join("set-origin.sh"), &origin_script)
+            .map_err(|e| e.to_string())?;
+        std::fs::write(cache_dir().join("set-destination.sh"), &dest_script)
+            .map_err(|e| e.to_string())?;
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(cache_dir().join("set-origin.sh"), std::fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
-        std::fs::set_permissions(cache_dir().join("set-destination.sh"), std::fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
+        std::fs::set_permissions(
+            cache_dir().join("set-origin.sh"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .map_err(|e| e.to_string())?;
+        std::fs::set_permissions(
+            cache_dir().join("set-destination.sh"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .map_err(|e| e.to_string())?;
 
         let home = std::env::var("HOME").unwrap_or_default();
         let app_file = format!("{}/.local/share/applications/confold-compare.desktop", home);
-        std::fs::create_dir_all(format!("{}/.local/share/applications", home)).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(format!("{}/.local/share/applications", home))
+            .map_err(|e| e.to_string())?;
         let desktop = format!(
             "[Desktop Entry]\nType=Application\nName=Confold Compare\nIcon=folder-compare\nExec=xdg-open %U\nTerminal=false\nMimeType=x-scheme-handler/confold;\nNoDisplay=true\n\n[Desktop Action SetOrigin]\nName=Confold Select Origin\nExec=sh {cache}/set-origin.sh %f\n\n[Desktop Action SetDestination]\nName=Confold Select Destination\nExec=sh {cache}/set-destination.sh %f\n",
             cache = cache_dir().display()
@@ -491,7 +529,10 @@ pub(crate) fn shell_integration_status(_state: State<AppState>) -> ShellIntegrat
     #[cfg(target_os = "macos")]
     {
         let installed = has_confold_workflow(&services_path());
-        ShellIntegrationStatus { supported: true, installed }
+        ShellIntegrationStatus {
+            supported: true,
+            installed,
+        }
     }
 
     #[cfg(target_os = "linux")]
@@ -500,12 +541,18 @@ pub(crate) fn shell_integration_status(_state: State<AppState>) -> ShellIntegrat
         let installed = PathBuf::from(&home)
             .join(".local/share/applications/confold-compare.desktop")
             .exists();
-        ShellIntegrationStatus { supported: true, installed }
+        ShellIntegrationStatus {
+            supported: true,
+            installed,
+        }
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
-        ShellIntegrationStatus { supported: false, installed: false }
+        ShellIntegrationStatus {
+            supported: false,
+            installed: false,
+        }
     }
 }
 

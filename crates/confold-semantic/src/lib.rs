@@ -2,7 +2,8 @@
 //!
 //! Confold captures bounded immutable input snapshots, an agent proposes a semantic result in JSON,
 //! and this crate validates the proposal against fresh input fingerprints before producing a review
-//! or writing a new output file. It performs no model invocation and never overwrites an input.
+//! or writing an explicitly selected output. It performs no model invocation; replacing a prepared
+//! input requires the separate exact-role operation and fresh fingerprints for every input.
 
 use std::collections::HashSet;
 use std::fs;
@@ -14,6 +15,10 @@ use sha2::{Digest, Sha256};
 use similar::TextDiff;
 use tempfile::NamedTempFile;
 use thiserror::Error;
+
+mod proposal_schema;
+
+pub use proposal_schema::proposal_json_schema;
 
 pub const SCHEMA_VERSION: u32 = 1;
 pub const MAX_INPUT_BYTES: u64 = 2_000_000;
@@ -87,6 +92,13 @@ pub enum InputRole {
     Left,
     Right,
     Base,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReplacementTarget {
+    Left,
+    Right,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -271,6 +283,32 @@ pub fn apply(
         schema_version: SCHEMA_VERSION,
         operation_id: bundle.operation_id.clone(),
         output,
+        sha256: sha256(result.as_bytes()),
+        byte_len: result.len() as u64,
+    })
+}
+
+pub fn replace_input(
+    bundle: &SemanticBundle,
+    proposal: &SemanticProposal,
+    target: ReplacementTarget,
+) -> Result<ApplyReport, SemanticError> {
+    validate(bundle, proposal)?;
+    ensure_fresh(bundle)?;
+    let result = applicable_result(bundle, proposal)?
+        .ok_or(SemanticError::NotApplicable(proposal.verdict))?;
+    let role = match target {
+        ReplacementTarget::Left => InputRole::Left,
+        ReplacementTarget::Right => InputRole::Right,
+    };
+    let snapshot = input(&bundle.inputs, role).ok_or_else(|| {
+        SemanticError::InvalidProposal(format!("bundle has no {role:?} input to replace"))
+    })?;
+    write_replace_atomic(&snapshot.path, result.as_bytes(), || ensure_fresh(bundle))?;
+    Ok(ApplyReport {
+        schema_version: SCHEMA_VERSION,
+        operation_id: bundle.operation_id.clone(),
+        output: snapshot.path.clone(),
         sha256: sha256(result.as_bytes()),
         byte_len: result.len() as u64,
     })
@@ -649,6 +687,43 @@ fn write_new_atomic(path: &Path, bytes: &[u8]) -> Result<(), SemanticError> {
             }
         }
     })?;
+    Ok(())
+}
+
+fn write_replace_atomic(
+    path: &Path,
+    bytes: &[u8],
+    revalidate: impl FnOnce() -> Result<(), SemanticError>,
+) -> Result<(), SemanticError> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let permissions = fs::metadata(path)
+        .map_err(|source| SemanticError::Read {
+            path: path.to_path_buf(),
+            source,
+        })?
+        .permissions();
+    let mut temporary = NamedTempFile::new_in(parent).map_err(|source| SemanticError::Write {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    temporary
+        .write_all(bytes)
+        .and_then(|()| temporary.as_file().sync_all())
+        .map_err(|source| SemanticError::Write {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    fs::set_permissions(temporary.path(), permissions).map_err(|source| SemanticError::Write {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    revalidate()?;
+    temporary
+        .persist(path)
+        .map_err(|error| SemanticError::Write {
+            path: path.to_path_buf(),
+            source: error.error,
+        })?;
     Ok(())
 }
 
@@ -1046,6 +1121,41 @@ mod tests {
             review(&bundle, &proposal),
             Err(SemanticError::StaleInput { .. })
         ));
+    }
+
+    #[test]
+    fn replace_input_writes_only_the_selected_prepared_side() {
+        let dir = tempfile::tempdir().unwrap();
+        let left = dir.path().join("left.md");
+        let right = dir.path().join("right.md");
+        write(&left, b"left\n");
+        write(&right, b"right\n");
+        let bundle = prepare(&left, &right, None).unwrap();
+        let proposal = proposal(&bundle, Verdict::Merged, Some("merged\n"));
+
+        let report = replace_input(&bundle, &proposal, ReplacementTarget::Right).unwrap();
+
+        assert_eq!(report.output, fs::canonicalize(&right).unwrap());
+        assert_eq!(fs::read_to_string(&left).unwrap(), "left\n");
+        assert_eq!(fs::read_to_string(&right).unwrap(), "merged\n");
+    }
+
+    #[test]
+    fn replace_input_rejects_stale_unselected_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let left = dir.path().join("left.md");
+        let right = dir.path().join("right.md");
+        write(&left, b"left\n");
+        write(&right, b"right\n");
+        let bundle = prepare(&left, &right, None).unwrap();
+        let proposal = proposal(&bundle, Verdict::Merged, Some("merged\n"));
+        write(&left, b"changed after review\n");
+
+        assert!(matches!(
+            replace_input(&bundle, &proposal, ReplacementTarget::Right),
+            Err(SemanticError::StaleInput { path }) if path == fs::canonicalize(&left).unwrap()
+        ));
+        assert_eq!(fs::read_to_string(&right).unwrap(), "right\n");
     }
 
     #[test]

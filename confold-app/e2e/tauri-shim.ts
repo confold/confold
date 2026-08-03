@@ -36,6 +36,10 @@ const REPORT: DiffReport = {
         left: null, right: meta("only_right.txt", ["only_right.txt"]), detail: null, children: [] },
       { rel_path: ["blob.bin"], name: "blob.bin", is_dir: false, status: "different",
         left: meta("blob.bin", ["blob.bin"], 32), right: meta("blob.bin", ["blob.bin"], 32), detail: "binary differs", children: [] },
+      { rel_path: ["image.png"], name: "image.png", is_dir: false, status: "different",
+        left: meta("image.png", ["image.png"], 68), right: meta("image.png", ["image.png"], 68), detail: "image differs", children: [] },
+      { rel_path: ["pending.dat"], name: "pending.dat", is_dir: false, status: "different",
+        left: meta("pending.dat", ["pending.dat"], 32), right: meta("pending.dat", ["pending.dat"], 32), detail: "binary differs", children: [] },
       { rel_path: ["big.log"], name: "big.log", is_dir: false, status: "different",
         left: meta("big.log", ["big.log"], 3_400_000), right: meta("big.log", ["big.log"], 3_500_000), detail: "size differs", children: [] },
     ],
@@ -81,13 +85,142 @@ const RIGHT_BYTES = LEFT_BYTES.map((b, i) => (i === 2 || i === 18 || i === 34 ? 
 
 const meta2 = { fp: "", eol: "\n", final_nl: false, mtime: null, created: null };
 
+let providerProfile = {
+  kind: "ollama",
+  baseUrl: "http://127.0.0.1:11434/v1",
+  model: "qwen3:4b-instruct",
+  useApiKey: false,
+};
+let verifiedModel: string | null = "qwen3:4b-instruct";
+let semanticLanguage = "en";
+
+function delayed<T>(value: T, delayMs = 1_000): Promise<T> {
+  return new Promise((resolve) => {
+    setTimeout(() => resolve(value), delayMs);
+  });
+}
+
 const responses: Record<string, (args?: Record<string, unknown>) => unknown> = {
   source_types: () => [],
+  load_recents: () => ({ origins: [], destinations: [] }),
+  save_recents: () => undefined,
+  shell_integration_status: () => ({ supported: true, installed: false }),
+  load_provider_settings: () => ({
+    profile: providerProfile,
+    hasApiKey: false,
+    hasCustomHeaders: false,
+    verifiedModel,
+  }),
+  load_semantic_preferences: () => ({ language: semanticLanguage }),
+  save_semantic_preferences: (args) => {
+    const preferences = args?.preferences;
+    semanticLanguage =
+      typeof preferences === "object" &&
+      preferences !== null &&
+      "language" in preferences &&
+      typeof preferences.language === "string"
+        ? preferences.language
+        : "en";
+    return { language: semanticLanguage };
+  },
+  save_provider_settings: (args) => {
+    providerProfile = {
+      ...providerProfile,
+      ...((args?.request as { profile?: typeof providerProfile })?.profile ?? {}),
+    };
+    verifiedModel = null;
+    return {
+      profile: providerProfile,
+      hasApiKey: false,
+      hasCustomHeaders: false,
+      verifiedModel,
+    };
+  },
+  list_provider_models: () => [
+    "qwen3:4b-instruct",
+    "qwen2.5-coder:7b",
+    "deepseek-coder:6.7b",
+    "llava:7b",
+    "llama3.2:3b",
+  ],
+  test_provider_capability: () => {
+    if (providerProfile.model === "reject-structured") {
+      return new Promise((_, reject) => {
+        setTimeout(
+          () => reject(new Error("Provider did not honor the required JSON schema.")),
+          1_000,
+        );
+      });
+    }
+    verifiedModel = providerProfile.model || "qwen3:8b";
+    return delayed({ model: verifiedModel });
+  },
+  semantic_review: () => delayed({
+    kind: "review",
+    model: verifiedModel || "qwen3:8b",
+    configuration: {
+      provider: providerProfile.kind,
+      endpoint: providerProfile.baseUrl,
+      requestedModel: providerProfile.model,
+      responseModel: verifiedModel || "qwen3:8b",
+      language: semanticLanguage,
+    },
+    origin_path: "/tmp/cdemo/left/readme.md",
+    destination_path: "/tmp/cdemo/right/readme.md",
+    proposal: {
+      schema_version: 1,
+      operation_id: "visual-operation",
+      verdict: "merged",
+      summary: "Both documents contribute useful, non-conflicting details.",
+      contributions: [
+        { source: "left", intent: "Preserve the concise introduction.", disposition: "preserved" },
+        { source: "right", intent: "Preserve the expanded example.", disposition: "preserved" },
+      ],
+      warnings: [],
+      result: "# Title\n\nConcise introduction.\n\nExpanded example.\n",
+    },
+    report: {
+      schema_version: 1,
+      operation_id: "visual-operation",
+      verdict: "merged",
+      applicable: true,
+      summary: "Both documents contribute useful, non-conflicting details.",
+      contributions: [
+        { source: "left", intent: "Preserve the concise introduction.", disposition: "preserved" },
+        { source: "right", intent: "Preserve the expanded example.", disposition: "preserved" },
+      ],
+      warnings: [],
+      result_sha256: "fixture",
+      diffs: [
+        { source: "left", unified_diff: "--- left\n+++ proposal\n@@\n+Expanded example.\n" },
+        { source: "right", unified_diff: "--- right\n+++ proposal\n@@\n+Concise introduction.\n" },
+      ],
+    },
+  }, 3_000),
+  semantic_apply_to: (args) => ({
+    schema_version: 1,
+    operation_id: "visual-operation",
+    output:
+      args?.target === "origin"
+        ? "/tmp/cdemo/left/readme.md"
+        : "/tmp/cdemo/right/readme.md",
+    sha256: "saved",
+    byte_len: 51,
+  }),
+  semantic_apply_new: (args) => ({
+    schema_version: 1,
+    operation_id: "visual-operation",
+    output: String(args?.output ?? "/tmp/cdemo/left/readme-merged.md"),
+    sha256: "saved",
+    byte_len: 51,
+  }),
   compare: () => REPORT,
   compare_level: () => REPORT,
   diff_file: (args) => {
     const rel = String((args?.left as { rel?: string })?.rel ?? "");
+    if (rel.endsWith("pending.dat")) return new Promise(() => {});
     if (rel.endsWith(".bin")) return { result: { kind: "binary", identical: false }, left: meta2, right: meta2 };
+    if (rel.endsWith(".png")) return { result: { kind: "binary", identical: false }, left: meta2, right: meta2 };
     if (rel.endsWith(".log")) return { result: { kind: "too_large", left_size: 3_400_000, right_size: 3_500_000 }, left: meta2, right: meta2 };
     if (rel.endsWith(".md")) {
       const diff = {
@@ -127,6 +260,10 @@ export function getCurrentWindow() {
 
 export function open(): Promise<string | null> {
   return Promise.resolve(null);
+}
+
+export function save(): Promise<string | null> {
+  return Promise.resolve("/tmp/cdemo/left/readme-merged.md");
 }
 
 export type UnlistenFn = () => void;

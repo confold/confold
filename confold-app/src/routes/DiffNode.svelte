@@ -1,6 +1,7 @@
 <script lang="ts">
   // A single flat row (one tree entry). The tree is flattened + virtualized in +page.svelte; this
   // component is intentionally NOT recursive.
+  import Sparkles from "@lucide/svelte/icons/sparkles";
   import { onDestroy } from "svelte";
   import type { DiffEntry, DiffStatus, EntryMeta } from "$lib/types";
   import { selection, keyOf, toggle } from "$lib/selection.svelte";
@@ -13,16 +14,20 @@
     dateTol = 2000,
     loading = false,
     resolvedStatus = null,
+    semantic = false,
     onopen,
     onexpand,
+    onsemantic,
   }: {
     entry: DiffEntry;
     depth?: number;
     dateTol?: number;
     loading?: boolean;
     resolvedStatus?: DiffStatus | null;
+    semantic?: boolean;
     onopen?: (e: DiffEntry) => void;
     onexpand?: (e: DiffEntry) => void;
+    onsemantic?: (e: DiffEntry) => void;
   } = $props();
 
   // Double-click: a file opens (side-by-side if on both sides, single view vs empty if on one — so you can
@@ -126,7 +131,7 @@
 <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
 <div class="node status-{effectiveStatus}" class:openable class:pending={stillPending}
   onclick={(e) => {
-    if ((e.target as HTMLElement).closest('.toggle, .sel')) return;
+    if ((e.target as HTMLElement).closest('.toggle, .sel, .semantic-action')) return;
     if (entry.is_dir) {
       if (e.detail !== 1) return; // 2nd click of a double-click: wait for ondblclick to handle it
       // Start a 200ms timer; if ondblclick fires before it, the timer is cleared and we drill in instead.
@@ -177,6 +182,20 @@
       {/if}
     </span>
     <span class="name">{entry.name}{entry.is_dir ? "/" : ""}</span>
+    {#if semantic}
+      <button
+        class="semantic-action"
+        type="button"
+        aria-label="Review {entry.name} with AI"
+        title="Review with AI"
+        onclick={(event) => {
+          event.stopPropagation();
+          onsemantic?.(entry);
+        }}
+      >
+        <Sparkles size={14} strokeWidth={2} aria-hidden="true" />
+      </button>
+    {/if}
   </span>
   <span class="szcol">{size(entry.left)}</span>
   <span class="szcol">{size(entry.right)}</span>
@@ -286,6 +305,27 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  .semantic-action {
+    display: inline-grid;
+    flex: none;
+    width: 1.55rem;
+    height: 1.4rem;
+    padding: 0;
+    border: 1px solid #8da9df;
+    border-radius: 5px;
+    background: #f4f7fd;
+    color: #2d5aa5;
+    cursor: pointer;
+    place-items: center;
+  }
+  .semantic-action:hover {
+    border-color: #396cd8;
+    background: #eaf0fc;
+  }
+  .semantic-action:focus-visible {
+    outline: 2px solid #396cd8;
+    outline-offset: 1px;
+  }
   /* fixed-width, right-aligned size columns with a separating gridline → tabular look */
   .szcol {
     flex: none;
@@ -329,6 +369,15 @@
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
   }
   @media (prefers-color-scheme: dark) {
+    .semantic-action {
+      border-color: #48658f;
+      background: #293344;
+      color: #b9d0f6;
+    }
+    .semantic-action:hover {
+      border-color: #6d94cf;
+      background: #303d51;
+    }
     .tt { background: #f0ece4; color: #1e1c18; border-color: #c8c2b8; box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
   }
   /* Responsive: hide date columns first (they're widest), then size columns. */

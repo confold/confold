@@ -16,6 +16,7 @@
     readOnly = false,
     onkeep,
     onskip,
+    onconfigureprovider,
   }: {
     left: FileRef;
     right: FileRef;
@@ -24,6 +25,7 @@
     readOnly?: boolean;
     onkeep?: () => void;
     onskip?: () => void;
+    onconfigureprovider?: (trigger: HTMLButtonElement) => void;
   } = $props();
 
   type Mode = "side" | "overlay" | "swipe" | "blink" | "diff";
@@ -222,7 +224,7 @@
 
 <svelte:window onpointermove={onMove} onpointerup={onUp} />
 
-<FileViewHeader {name} {onback} {readOnly} {onkeep} {onskip} />
+<FileViewHeader {name} {onback} {readOnly} {onkeep} {onskip} onsettings={onconfigureprovider} />
 
 <div class="ibar">
   <span class="modes">

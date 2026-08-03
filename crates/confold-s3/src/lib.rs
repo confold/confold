@@ -60,7 +60,9 @@ impl S3Config {
             .with_secret_access_key(self.secret_access_key.as_str())
             .with_virtual_hosted_style_request(false); // false = path style
         if let Some(endpoint) = &self.endpoint {
-            builder = builder.with_endpoint(endpoint.as_str()).with_allow_http(true);
+            builder = builder
+                .with_endpoint(endpoint.as_str())
+                .with_allow_http(true);
         }
         builder.build()
     }
@@ -165,7 +167,10 @@ impl Source for S3Source {
             // Direct child objects → files.
             for obj in page.result.objects {
                 let key = obj.location.as_ref().to_owned();
-                if max_key_this_page.as_deref().is_none_or(|m| key.as_str() > m) {
+                if max_key_this_page
+                    .as_deref()
+                    .is_none_or(|m| key.as_str() > m)
+                {
                     max_key_this_page = Some(key);
                 }
                 let Some(name) = obj.location.filename() else {
@@ -353,7 +358,10 @@ impl SourceMut for S3Source {
             let mut max_key_this_page: Option<String> = None;
             for obj in page.result.objects {
                 let key = obj.location.as_ref().to_owned();
-                if max_key_this_page.as_deref().is_none_or(|m| key.as_str() > m) {
+                if max_key_this_page
+                    .as_deref()
+                    .is_none_or(|m| key.as_str() > m)
+                {
                     max_key_this_page = Some(key);
                 }
                 under.push(obj.location);

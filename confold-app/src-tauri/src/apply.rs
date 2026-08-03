@@ -1,26 +1,31 @@
 #[allow(unused_imports)]
-use crate::sources::*;
-#[allow(unused_imports)]
-use crate::scan::*;
+use crate::diff::*;
 #[allow(unused_imports)]
 use crate::plan::*;
 #[allow(unused_imports)]
-use crate::diff::*;
+use crate::scan::*;
 #[allow(unused_imports)]
-use crate::{ENTRY_RESOLVED, MIGRATE_PROGRESS, MIGRATE_DONE, MIGRATE_PHASE, PLAN_PROGRESS, PLAN_READY};
+use crate::sources::*;
+#[allow(unused_imports)]
+use crate::{
+    ENTRY_RESOLVED, MIGRATE_DONE, MIGRATE_PHASE, MIGRATE_PROGRESS, PLAN_PROGRESS, PLAN_READY,
+};
 
 #[allow(unused_imports)]
 use confold_core::{
     compare as engine_compare, compare_at_with_progress as engine_compare_with_progress,
-    compare_file as engine_compare_file, full_equal, list_level as engine_list_level,
-    Capabilities, CompareConfig, CompareMethod, ContentReader, DiffEntry, DiffReport, DiffStatus,
-    EntryMeta, FilterSet, LocalSource, RelPath, Source, SourceError, SourceMut,
-    DEFAULT_LARGE_FILE_THRESHOLD,
+    compare_file as engine_compare_file, full_equal, list_level as engine_list_level, Capabilities,
+    CompareConfig, CompareMethod, ContentReader, DiffEntry, DiffReport, DiffStatus, EntryMeta,
+    FilterSet, LocalSource, RelPath, Source, SourceError, SourceMut, DEFAULT_LARGE_FILE_THRESHOLD,
 };
 #[allow(unused_imports)]
 use confold_s3::{S3Config, S3Source};
 #[allow(unused_imports)]
 use confold_sftp::{SftpAuth, SftpConfig, SftpSource};
+#[allow(unused_imports)]
+use confold_sync::{apply as sync_apply, ActionOutcome, SyncAction, SyncOp};
+#[allow(unused_imports)]
+use confold_textdiff::{diff_hunks, diff_text, is_binary_bytes, FileDiff, FileDiffHunks};
 #[allow(unused_imports)]
 use serde::{Deserialize, Serialize};
 #[allow(unused_imports)]
@@ -31,10 +36,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 #[allow(unused_imports)]
 use tauri::{AppHandle, Emitter, State};
-#[allow(unused_imports)]
-use confold_sync::{apply as sync_apply, ActionOutcome, SyncAction, SyncOp};
-#[allow(unused_imports)]
-use confold_textdiff::{diff_text, diff_hunks, is_binary_bytes, FileDiff, FileDiffHunks};
 
 /// Progress of one concrete migrate operation (a `SyncAction` may expand into several — e.g. a
 /// directory copy yields one per descendant). Streamed to the UI as each completes.
@@ -88,7 +89,11 @@ pub(crate) fn run_migrate(
                 }
                 for outcome in sync_apply(left, right, &[leaf.to_sync_action(action.op)], false) {
                     summary.total += 1;
-                    if outcome.ok { summary.ok += 1; } else { summary.failed += 1; }
+                    if outcome.ok {
+                        summary.ok += 1;
+                    } else {
+                        summary.failed += 1;
+                    }
                     on_outcome(&outcome, action.reason);
                 }
             }
@@ -96,7 +101,11 @@ pub(crate) fn run_migrate(
             // File action, delete, or manually-constructed action (e.g. tests): single apply call.
             for outcome in sync_apply(left, right, &[action.to_sync_action()], false) {
                 summary.total += 1;
-                if outcome.ok { summary.ok += 1; } else { summary.failed += 1; }
+                if outcome.ok {
+                    summary.ok += 1;
+                } else {
+                    summary.failed += 1;
+                }
                 on_outcome(&outcome, action.reason);
             }
         }
@@ -165,7 +174,9 @@ pub(crate) fn visit_for_origin_delete(entry: &DiffEntry, plan: &mut OriginDelete
             }
         }
         DiffStatus::Different => plan.blockers.push(blocker(entry, "differs in destination")),
-        DiffStatus::LeftOnly => plan.blockers.push(blocker(entry, "only in origin (not copied)")),
+        DiffStatus::LeftOnly => plan
+            .blockers
+            .push(blocker(entry, "only in origin (not copied)")),
         DiffStatus::Error => plan.blockers.push(blocker(entry, "comparison error")),
         // Excluded items are left alone; any other skip (symlink, non-descended) cannot be verified.
         DiffStatus::Skipped if is_filtered(entry) => {}
@@ -236,7 +247,10 @@ pub(crate) fn run_origin_delete(
     cancelled: impl Fn() -> bool,
     mut on_delete: impl FnMut(&ActionOutcome),
 ) -> MoveSummary {
-    let mut summary = MoveSummary { attempted: true, ..Default::default() };
+    let mut summary = MoveSummary {
+        attempted: true,
+        ..Default::default()
+    };
     for rel in &plan.files {
         if cancelled() {
             summary.cancelled = true;
@@ -381,9 +395,13 @@ pub(crate) fn migrate_apply(
                 },
             );
         };
-        let summary = run_migrate(l.as_ref(), r.as_ref(), &actions, is_cancelled, |o, reason| {
-            emit_progress(o, reason)
-        });
+        let summary = run_migrate(
+            l.as_ref(),
+            r.as_ref(),
+            &actions,
+            is_cancelled,
+            |o, reason| emit_progress(o, reason),
+        );
 
         // M2 move: re-verify (full) and, all-or-nothing, delete the origin. Only when requested and the
         // apply completed cleanly — any apply failure or cancellation keeps the origin untouched.
@@ -398,18 +416,28 @@ pub(crate) fn migrate_apply(
                 ..Default::default()
             }),
             Some(filters) => {
-                let _ = app.emit(MIGRATE_PHASE, MigratePhase { generation, phase: "verifying" });
+                let _ = app.emit(
+                    MIGRATE_PHASE,
+                    MigratePhase {
+                        generation,
+                        phase: "verifying",
+                    },
+                );
                 let mut emitted_emptying = false;
-                let result = move_origin(l.as_ref(), r.as_ref(), filters, is_cancelled, |outcome| {
-                    if !emitted_emptying {
-                        emitted_emptying = true;
-                        let _ = app.emit(
-                            MIGRATE_PHASE,
-                            MigratePhase { generation, phase: "emptying_origin" },
-                        );
-                    }
-                    emit_progress(outcome, MigrateReason::Moved);
-                });
+                let result =
+                    move_origin(l.as_ref(), r.as_ref(), filters, is_cancelled, |outcome| {
+                        if !emitted_emptying {
+                            emitted_emptying = true;
+                            let _ = app.emit(
+                                MIGRATE_PHASE,
+                                MigratePhase {
+                                    generation,
+                                    phase: "emptying_origin",
+                                },
+                            );
+                        }
+                        emit_progress(outcome, MigrateReason::Moved);
+                    });
                 Some(result.unwrap_or_else(|e| MoveSummary {
                     attempted: true,
                     blockers: vec![format!("re-verification failed: {e}")],
@@ -419,7 +447,14 @@ pub(crate) fn migrate_apply(
             None => None,
         };
 
-        let _ = app.emit(MIGRATE_DONE, MigrateDone { generation, summary, move_result });
+        let _ = app.emit(
+            MIGRATE_DONE,
+            MigrateDone {
+                generation,
+                summary,
+                move_result,
+            },
+        );
     });
     Ok(())
 }

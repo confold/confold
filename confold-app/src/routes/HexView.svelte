@@ -15,6 +15,7 @@
     readOnly = false,
     onkeep,
     onskip,
+    onconfigureprovider,
   }: {
     left: FileRef;
     right: FileRef;
@@ -24,6 +25,7 @@
     readOnly?: boolean;
     onkeep?: () => void;
     onskip?: () => void;
+    onconfigureprovider?: (trigger: HTMLButtonElement) => void;
   } = $props();
 
   let data = $state<HexCompare | null>(null);
@@ -87,7 +89,7 @@
 </script>
 
 <div class="hexview">
-  <FileViewHeader {name} {onback} {readOnly} {onkeep} {onskip} />
+  <FileViewHeader {name} {onback} {readOnly} {onkeep} {onskip} onsettings={onconfigureprovider} />
   <div class="hexbar">
     <span class="verdict" class:same={identical}>{identical ? "Binary — identical" : "Binary — they differ"}</span>
     {#if regions.length > 0}

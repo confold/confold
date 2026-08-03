@@ -290,6 +290,11 @@ Keep the previous release available and restore it if post-publication validatio
 EOF
 echo "  + semantic/ : base.md, left.md, right.md (three-way prose merge)"
 
+mkdir -p "$O/semantic" "$D/semantic"
+cp "$S/left.md" "$O/semantic/release-process.md"
+cp "$S/right.md" "$D/semantic/release-process.md"
+echo "  + semantic/release-process.md : reorganized prose with complementary requirements (AI review demo)"
+
 # 10i. Image pairs (24-bit BMP, no deps) for the image comparator. Variants exercise every mode:
 #      base = colourful gradient; multi = 3 separate coloured blocks (→ region nav); subtle = faint +18
 #      tint in a band (→ tolerance slider).

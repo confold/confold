@@ -2,6 +2,7 @@
   import { commands } from "$lib/commands";
   import { listen, type UnlistenFn } from "@tauri-apps/api/event";
   import { onMount, tick } from "svelte";
+  import Settings from "@lucide/svelte/icons/settings";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import type { DiffReport, DiffStatus, CompareOpts, SyncAction, ActionOutcome, SyncOp, DiffEntry, DiffResult, DiffFileResult, LargeDiffResult, FileDiffHunks, FileMeta, SourceSpec, FileRef, SourceTypeInfo } from "$lib/types";
 
@@ -28,7 +29,9 @@
   import HexView from "./HexView.svelte";
   import ImageView from "./ImageView.svelte";
   import SourcePicker from "./SourcePicker.svelte";
+  import EntryTools from "./EntryTools.svelte";
   import { isImagePath } from "$lib/imagediff";
+  import { isSemanticPath } from "$lib/semantic";
   import { isComparing, hunksToFileDiff, splitPath, fileRefOf, refKey, makeOpts } from "$lib/utils/compare-helpers";
 
   // Origen / Destino sources (any type). Replaces the old Left/Right path inputs.
@@ -192,13 +195,14 @@
   // A file opened from a folder-tree row (double-click) → side-by-side without leaving folders mode.
   // Discriminated union: loading=true immediately on click (shows skeleton), loading=false when diff
   // arrives (normal text/binary), hunks=true for large files shown in read-only paginated hunk mode.
-  type OpenedFileBase = { name: string; left: FileRef; right: FileRef; leftDate: number | null; rightDate: number | null; leftCreated: number | null; rightCreated: number | null };
+  type OpenedFileBase = { name: string; left: FileRef; right: FileRef; leftDate: number | null; rightDate: number | null; leftCreated: number | null; rightCreated: number | null; autoReview: boolean };
   type OpenedFile =
     | (OpenedFileBase & { loading: true })
     | (OpenedFileBase & { loading: false; result: DiffResult; leftMeta: FileMeta; rightMeta: FileMeta })
     | (OpenedFileBase & { loading: false; hunks: FileDiffHunks; leftMeta: FileMeta; rightMeta: FileMeta });
   let openedFile = $state<OpenedFile | null>(null);
   let sbsExitHandler: (() => void) | null = $state(null);
+  let openSettings: ((trigger: HTMLButtonElement) => void) | null = $state(null);
 
   // Large-file warning dialog state.
   let largeFileConfirm = $state<{ name: string; left: FileRef; right: FileRef; leftSize: number; rightSize: number } | null>(null);
@@ -681,7 +685,7 @@
   }
 
   // Open a differing file (clicked in the folder tree) in the side-by-side view.
-  async function openFile(entry: DiffEntry) {
+  async function openFile(entry: DiffEntry, autoReview = false) {
     if (!originSpec || !destSpec) return;
     error = "";
     const relPath = entry.rel_path.join("/");
@@ -691,6 +695,7 @@
       name: relPath, left: leftRef, right: rightRef,
       leftDate: entry.left?.mtime ?? null, rightDate: entry.right?.mtime ?? null,
       leftCreated: entry.left?.created ?? null, rightCreated: entry.right?.created ?? null,
+      autoReview,
     };
     openedFile = { loading: true, ...base };
     try {
@@ -714,7 +719,7 @@
   async function openLargeFile() {
     if (!largeFileConfirm) return;
     const { name, left, right } = largeFileConfirm;
-    const base = { name, left, right, leftDate: null, rightDate: null, leftCreated: null, rightCreated: null };
+    const base = { name, left, right, leftDate: null, rightDate: null, leftCreated: null, rightCreated: null, autoReview: false };
     largeFileConfirm = null;
     openedFile = { loading: true, ...base };
     try {
@@ -756,7 +761,7 @@
     syncPlanOpen = false;
     afterFileBack = "plan";
     planViewingAction = action;
-    openedFile = { loading: true, name: relPath, left: leftRef, right: rightRef, leftDate: null, rightDate: null, leftCreated: null, rightCreated: null };
+    openedFile = { loading: true, name: relPath, left: leftRef, right: rightRef, leftDate: null, rightDate: null, leftCreated: null, rightCreated: null, autoReview: false };
     try {
       const r = await commands.diffFile(leftRef, rightRef);
       if (!openedFile) return;
@@ -770,7 +775,7 @@
           loading: false, name: relPath, left: leftRef, right: rightRef,
           leftDate: r.left.mtime, rightDate: r.right.mtime,
           leftCreated: r.left.created, rightCreated: r.right.created,
-          result: r.result, leftMeta: r.left, rightMeta: r.right,
+          result: r.result, leftMeta: r.left, rightMeta: r.right, autoReview: false,
         };
       }
     } catch (e) {
@@ -1056,6 +1061,26 @@
     } else {
       openFile(entry);
     }
+  }
+
+  function reviewFile(entry: DiffEntry) {
+    void openFile(entry, true);
+  }
+
+  function canReviewFile(entry: DiffEntry, resolvedStatus: DiffStatus | null): boolean {
+    return (
+      originSpec?.kind === "fs" &&
+      destSpec?.kind === "fs" &&
+      !entry.is_dir &&
+      entry.left !== null &&
+      entry.right !== null &&
+      (resolvedStatus ?? entry.status) === "different" &&
+      isSemanticPath(entry.name)
+    );
+  }
+
+  function configureProvider(trigger: HTMLButtonElement) {
+    openSettings?.(trigger);
   }
   function enterFolder(entry: DiffEntry) {
     focusPath = [...entry.rel_path];
@@ -1397,10 +1422,11 @@
   // Still needed here: the checked-item total feeds the progress modal's "≈N" reference.
   const planCheckedTotal = $derived(checkedItemTotal(migrateActions ?? [], migrateChecked));
 
+  let shellSupported = $state<boolean | null>(null);
   let shellInstalled = $state(false);
   let shellBusy = $state(false);
   async function toggleShellIntegration() {
-    if (shellBusy) return;
+    if (shellSupported !== true || shellBusy) return;
     shellBusy = true;
     try {
       if (shellInstalled) {
@@ -1419,7 +1445,14 @@
     }
   }
   onMount(() => {
-    commands.shellIntegrationStatus().then((s) => (shellInstalled = s.installed)).catch(() => {});
+    commands.shellIntegrationStatus()
+      .then((status) => {
+        shellSupported = status.supported;
+        shellInstalled = status.installed;
+      })
+      .catch(() => {
+        shellSupported = false;
+      });
   });
 </script>
 
@@ -1445,6 +1478,16 @@
 {/snippet}
 
 <main>
+  <EntryTools
+    visible={!comparing && !openedFile}
+    {appVersion}
+    {shellSupported}
+    {shellInstalled}
+    {shellBusy}
+    shellMessage={shellMsg}
+    onToggleShell={toggleShellIntegration}
+    onregistersettings={(open) => (openSettings = open)}
+  />
   {#if !comparing && !openedFile}
   <div class="entry">
     <header>
@@ -1551,19 +1594,19 @@
       {/if}
     </div>
   </div>
-  <div class="entry-shell-toggle">
-    <label class="ctl">
-      <input type="checkbox" checked={shellInstalled} disabled={shellBusy} onchange={toggleShellIntegration} />
-      Folder right-click integration
-    </label>
-    {#if shellMsg}<span class="shell-msg">{shellMsg}</span>{/if}
-  </div>
   </div>
   </div>
   {:else}
   {#if !openedFile}
   <div class="compact-bar">
     <img class="compact-logo" src="/confold-mark.png" alt="Confold" />
+    <button
+      class="mini-back"
+      type="button"
+      onclick={tryLeaveToSources}
+      title="Back to source selection"
+      aria-label="Back to source selection"
+    >←</button>
     <button class="mini-src" type="button" onclick={tryLeaveToSources} title="Back to source selection">
       {#if originSpec}<span class="ico">{slugOf(originSpec).icon}</span><span class="mini-slug">{slugOf(originSpec).label}</span>{/if}
     </button>
@@ -1573,6 +1616,16 @@
     </button>
     {#if report}
       <button class="mini-refresh" type="button" onclick={refresh} title="Re-scan comparison">↺</button>
+    {/if}
+    <button
+      class="mini-settings"
+      type="button"
+      aria-label="Open settings"
+      aria-haspopup="dialog"
+      title="Settings"
+      onclick={(event) => configureProvider(event.currentTarget)}
+    ><Settings size={17} strokeWidth={2} aria-hidden="true" /></button>
+    {#if report}
       <span class="mini-opts">{@render compareControls()}</span>
       {#if preloading}<span class="mini-preloading"><span class="spinner"></span> loading folders…</span>{/if}
     {/if}
@@ -1586,7 +1639,7 @@
 
   {#if openedFile}
     {#if openedFile.loading}
-      <SideBySideSkeleton name={openedFile.name} onback={closeOpenedFile} />
+      <SideBySideSkeleton name={openedFile.name} onback={closeOpenedFile} onconfigureprovider={configureProvider} />
     {:else if 'hunks' in openedFile}
       <!-- Large-file hunks-only mode: read-only, paginated. Status bar is ABOVE the diff. -->
       <div class="large-file-bar">
@@ -1615,6 +1668,7 @@
           onskip={afterFileBack === "plan" ? skipFromPlan : undefined}
           onback={closeOpenedFile}
           onregisterexit={(fn) => (sbsExitHandler = fn)}
+          onconfigureprovider={configureProvider}
         />
       {/key}
     {:else if openedFile.result.kind === "text"}
@@ -1636,6 +1690,8 @@
           onsaved={onFileSaved}
           onback={closeOpenedFile}
           onregisterexit={(fn) => (sbsExitHandler = fn)}
+          autoReview={openedFile.autoReview}
+          onconfigureprovider={configureProvider}
         />
       {/key}
     {:else if openedFile.result.kind === "binary"}
@@ -1648,6 +1704,7 @@
             readOnly={planReview}
             onkeep={planReview ? keepFromPlan : undefined}
             onskip={planReview ? skipFromPlan : undefined}
+            onconfigureprovider={configureProvider}
           />
         {:else}
           <HexView
@@ -1656,6 +1713,7 @@
             readOnly={planReview}
             onkeep={planReview ? keepFromPlan : undefined}
             onskip={planReview ? skipFromPlan : undefined}
+            onconfigureprovider={configureProvider}
           />
         {/if}
       {/key}
@@ -1727,7 +1785,17 @@
           {#each visible as v (v.row.entry.rel_path.join("/"))}
             <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
             <div class="vrow" class:cursor={v.index === cursor} style="top: {v.index * ROW_H}px" onclick={() => (cursor = v.index)}>
-              <DiffNode entry={v.row.entry} depth={v.row.depth} {dateTol} onopen={onOpen} loading={v.row.loading} resolvedStatus={v.row.resolvedStatus} onexpand={onExpand} />
+              <DiffNode
+                entry={v.row.entry}
+                depth={v.row.depth}
+                {dateTol}
+                onopen={onOpen}
+                loading={v.row.loading}
+                resolvedStatus={v.row.resolvedStatus}
+                onexpand={onExpand}
+                semantic={canReviewFile(v.row.entry, v.row.resolvedStatus)}
+                onsemantic={reviewFile}
+              />
             </div>
           {/each}
         </div>
@@ -1739,14 +1807,14 @@
   {#if diffResult && originSpec && destSpec}
     {#if diffResult.kind === "text" && filesMeta}
       {#key slugOf(originSpec).label + "|" + slugOf(destSpec).label}
-        <SideBySide initial={diffResult.diff} left={fileRefOf(originSpec)} right={fileRefOf(destSpec)} leftMeta={filesMeta.left} rightMeta={filesMeta.right} name={fileRefOf(originSpec).rel} leftDate={filesMeta.left.mtime} rightDate={filesMeta.right.mtime} leftCreated={filesMeta.left.created} rightCreated={filesMeta.right.created} />
+        <SideBySide initial={diffResult.diff} left={fileRefOf(originSpec)} right={fileRefOf(destSpec)} leftMeta={filesMeta.left} rightMeta={filesMeta.right} name={fileRefOf(originSpec).rel} leftDate={filesMeta.left.mtime} rightDate={filesMeta.right.mtime} leftCreated={filesMeta.left.created} rightCreated={filesMeta.right.created} onsaved={onFileSaved} onconfigureprovider={configureProvider} />
       {/key}
     {:else if diffResult.kind === "binary"}
       {#key slugOf(originSpec).label + "|" + slugOf(destSpec).label}
         {#if isImagePath(originSpec.fields.root ?? "") && isImagePath(destSpec.fields.root ?? "")}
-          <ImageView left={fileRefOf(originSpec)} right={fileRefOf(destSpec)} />
+          <ImageView left={fileRefOf(originSpec)} right={fileRefOf(destSpec)} onconfigureprovider={configureProvider} />
         {:else}
-          <HexView left={fileRefOf(originSpec)} right={fileRefOf(destSpec)} identical={diffResult.identical} />
+          <HexView left={fileRefOf(originSpec)} right={fileRefOf(destSpec)} identical={diffResult.identical} onconfigureprovider={configureProvider} />
         {/if}
       {/key}
     {/if}
@@ -2187,22 +2255,6 @@
   .entry-bottom {
     padding-bottom: 0;
   }
-  .entry-shell-toggle {
-    position: fixed;
-    bottom: 0.5rem;
-    left: 0.75rem;
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-    opacity: 0.5;
-    font-size: 0.8rem;
-  }
-  .entry-shell-toggle:hover {
-    opacity: 1;
-  }
-  .shell-msg {
-    color: #2a8c3f;
-  }
   .compact-bar {
     display: flex;
     align-items: center;
@@ -2245,9 +2297,23 @@
   .mini-opts {
     display: inline-flex;
     align-items: center;
+    justify-content: flex-end;
     gap: 0.6rem;
-    margin-left: auto;
+    flex: 0 0 100%;
   }
+  .mini-settings {
+    display: inline-grid;
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
+    place-items: center;
+    flex: none;
+    margin-left: auto;
+    border-color: #aaa;
+    background: transparent;
+    color: inherit;
+  }
+  .mini-settings:hover { background: rgba(128,128,128,0.12); }
   .ctl {
     display: inline-flex;
     align-items: center;
@@ -2261,6 +2327,7 @@
   .ctl .tol {
     width: 5rem;
   }
+  .mini-back,
   .mini-refresh {
     border-radius: 7px;
     border: 1px solid #aaa;
@@ -2272,6 +2339,8 @@
     cursor: pointer;
     line-height: 1;
   }
+  .mini-back { font-size: 1rem; }
+  .mini-back:hover,
   .mini-refresh:hover { background: rgba(128,128,128,0.12); }
   .loading {
     padding: 1.2rem 0;
@@ -2672,9 +2741,6 @@
     }
     .result {
       background: #1f3a26;
-    }
-    .shell-msg {
-      color: #6abf7a;
     }
     .recent.stale {
       color: #e74c3c;

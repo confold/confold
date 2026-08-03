@@ -34,7 +34,10 @@ pub(crate) struct RecentsResponse {
 
 fn is_stale(spec: &SourceSpec) -> bool {
     if spec.kind == "fs" {
-        spec.fields.get("root").map(|p| !Path::new(p).exists()).unwrap_or(false)
+        spec.fields
+            .get("root")
+            .map(|p| !Path::new(p).exists())
+            .unwrap_or(false)
     } else {
         false
     }
@@ -60,8 +63,14 @@ pub(crate) fn load_recents() -> RecentsResponse {
 }
 
 #[tauri::command]
-pub(crate) fn save_recents(origins: Vec<StoredEntry>, destinations: Vec<StoredEntry>) -> Result<(), String> {
-    let data = StoredRecents { origins, destinations };
+pub(crate) fn save_recents(
+    origins: Vec<StoredEntry>,
+    destinations: Vec<StoredEntry>,
+) -> Result<(), String> {
+    let data = StoredRecents {
+        origins,
+        destinations,
+    };
     let json = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(cache_dir()).map_err(|e| e.to_string())?;
     std::fs::write(cache_dir().join("recents.json"), json).map_err(|e| e.to_string())

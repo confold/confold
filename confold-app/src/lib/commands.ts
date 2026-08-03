@@ -42,6 +42,100 @@ export type SyncFlags = {
 /** Result of probing a source (the picker's ✓/✗ + dir-vs-file inference). */
 export type TestResult = { ok: boolean; is_dir: boolean; message: string };
 
+export type ProviderKind = "ollama" | "open_ai_compatible";
+
+export type ProviderProfile = {
+  kind: ProviderKind;
+  baseUrl: string;
+  model: string;
+  useApiKey: boolean;
+};
+
+export type ProviderSettings = {
+  profile: ProviderProfile;
+  hasApiKey: boolean;
+  hasCustomHeaders: boolean;
+  verifiedModel: string | null;
+};
+
+export type SaveProviderSettingsRequest = {
+  profile: ProviderProfile;
+  apiKey?: string;
+  clearApiKey: boolean;
+  customHeaders?: Record<string, string>;
+  clearCustomHeaders: boolean;
+};
+
+export type ProviderCapabilityReport = { model: string };
+
+export type SemanticLanguage = "en" | "es";
+
+export type SemanticPreferences = {
+  readonly language: SemanticLanguage;
+};
+
+export type SemanticReviewConfiguration = {
+  readonly provider: ProviderKind;
+  readonly endpoint: string;
+  readonly requestedModel: string;
+  readonly responseModel: string;
+  readonly language: SemanticLanguage;
+};
+
+export type SemanticContribution = {
+  readonly source: "left" | "right" | "base";
+  readonly intent: string;
+  readonly disposition: "preserved" | "already_present" | "superseded" | "omitted" | "uncertain";
+};
+
+export type SemanticProposal = {
+  readonly schema_version: number;
+  readonly operation_id: string;
+  readonly verdict: "equivalent" | "prefer_left" | "prefer_right" | "merged" | "uncertain";
+  readonly summary: string;
+  readonly contributions: readonly SemanticContribution[];
+  readonly warnings: readonly string[];
+  readonly result: string | null;
+};
+
+export type SemanticReviewOutcome =
+  | {
+      readonly kind: "fast_path";
+      readonly fast_path: "byte_identical" | "formatting_only" | "prefer_left" | "prefer_right";
+    }
+  | {
+      readonly kind: "review";
+      readonly model: string;
+      readonly configuration: SemanticReviewConfiguration;
+      readonly origin_path: string;
+      readonly destination_path: string;
+      readonly proposal: SemanticProposal;
+      readonly report: {
+        readonly schema_version: number;
+        readonly operation_id: string;
+        readonly verdict: SemanticProposal["verdict"];
+        readonly applicable: boolean;
+        readonly summary: string;
+        readonly contributions: readonly SemanticContribution[];
+        readonly warnings: readonly string[];
+        readonly result_sha256: string | null;
+        readonly diffs: readonly {
+          readonly source: "left" | "right" | "base";
+          readonly unified_diff: string;
+        }[];
+      };
+    };
+
+export type SemanticTarget = "origin" | "destination";
+
+export type SemanticApplyReport = {
+  readonly schema_version: number;
+  readonly operation_id: string;
+  readonly output: string;
+  readonly sha256: string;
+  readonly byte_len: number;
+};
+
 export const commands = {
   /** Full/level comparison of two sources (streams verdicts via `entry-resolved` events). */
   compare: (left: SourceSpec, right: SourceSpec, opts: CompareOpts, token: number) =>
@@ -115,6 +209,31 @@ export const commands = {
   uninstallShellIntegration: () => invoke<void>("uninstall_shell_integration"),
   shellIntegrationStatus: () =>
     invoke<{ supported: boolean; installed: boolean }>("shell_integration_status"),
+
+  loadProviderSettings: () => invoke<ProviderSettings>("load_provider_settings"),
+  saveProviderSettings: (request: SaveProviderSettingsRequest) =>
+    invoke<ProviderSettings>("save_provider_settings", { request }),
+  listProviderModels: () => invoke<string[]>("list_provider_models"),
+  testProviderCapability: () =>
+    invoke<ProviderCapabilityReport>("test_provider_capability"),
+  semanticReview: (left: FileRef, right: FileRef) =>
+    invoke<SemanticReviewOutcome>("semantic_review", { left, right }),
+  loadSemanticPreferences: () =>
+    invoke<SemanticPreferences>("load_semantic_preferences"),
+  saveSemanticPreferences: (preferences: SemanticPreferences) =>
+    invoke<SemanticPreferences>("save_semantic_preferences", { preferences }),
+  semanticApplyTo: (
+    left: FileRef,
+    right: FileRef,
+    proposal: SemanticProposal,
+    target: SemanticTarget,
+  ) => invoke<SemanticApplyReport>("semantic_apply_to", { left, right, proposal, target }),
+  semanticApplyNew: (
+    left: FileRef,
+    right: FileRef,
+    proposal: SemanticProposal,
+    output: string,
+  ) => invoke<SemanticApplyReport>("semantic_apply_new", { left, right, proposal, output }),
 
   loadRecents: () => invoke<{
     origins: { spec: SourceSpec; isDir: boolean; stale: boolean }[];

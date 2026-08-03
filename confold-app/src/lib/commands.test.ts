@@ -96,4 +96,55 @@ describe("command bindings → invoke contract", () => {
     void status;
     expect(last()).toEqual(["shell_integration_status"]);
   });
+
+  it("AI provider commands preserve the typed settings contract", () => {
+    const request = {
+      profile: {
+        kind: "open_ai_compatible" as const,
+        baseUrl: "https://provider.example/v1",
+        model: "model-a",
+        useApiKey: true,
+      },
+      apiKey: "secret",
+      clearApiKey: false,
+      customHeaders: { "x-route": "private" },
+      clearCustomHeaders: false,
+    };
+    commands.loadProviderSettings();
+    expect(last()).toEqual(["load_provider_settings"]);
+    commands.saveProviderSettings(request);
+    expect(last()).toEqual(["save_provider_settings", { request }]);
+    commands.listProviderModels();
+    expect(last()).toEqual(["list_provider_models"]);
+    commands.testProviderCapability();
+    expect(last()).toEqual(["test_provider_capability"]);
+  });
+
+  it("semantic commands preserve review, preference, and apply arguments", () => {
+    const proposal = {
+      schema_version: 1,
+      operation_id: "operation-1",
+      verdict: "merged" as const,
+      summary: "Merged fixture",
+      contributions: [],
+      warnings: [],
+      result: "merged",
+    };
+    commands.semanticReview(FILE, FILE);
+    expect(last()).toEqual(["semantic_review", { left: FILE, right: FILE }]);
+    commands.loadSemanticPreferences();
+    expect(last()).toEqual(["load_semantic_preferences"]);
+    commands.saveSemanticPreferences({ language: "es" });
+    expect(last()).toEqual(["save_semantic_preferences", { preferences: { language: "es" } }]);
+    commands.semanticApplyTo(FILE, FILE, proposal, "destination");
+    expect(last()).toEqual([
+      "semantic_apply_to",
+      { left: FILE, right: FILE, proposal, target: "destination" },
+    ]);
+    commands.semanticApplyNew(FILE, FILE, proposal, "/tmp/merged.md");
+    expect(last()).toEqual([
+      "semantic_apply_new",
+      { left: FILE, right: FILE, proposal, output: "/tmp/merged.md" },
+    ]);
+  });
 });

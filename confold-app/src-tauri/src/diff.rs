@@ -1,26 +1,31 @@
 #[allow(unused_imports)]
-use crate::sources::*;
-#[allow(unused_imports)]
-use crate::scan::*;
+use crate::apply::*;
 #[allow(unused_imports)]
 use crate::plan::*;
 #[allow(unused_imports)]
-use crate::apply::*;
+use crate::scan::*;
 #[allow(unused_imports)]
-use crate::{ENTRY_RESOLVED, MIGRATE_PROGRESS, MIGRATE_DONE, MIGRATE_PHASE, PLAN_PROGRESS, PLAN_READY};
+use crate::sources::*;
+#[allow(unused_imports)]
+use crate::{
+    ENTRY_RESOLVED, MIGRATE_DONE, MIGRATE_PHASE, MIGRATE_PROGRESS, PLAN_PROGRESS, PLAN_READY,
+};
 
 #[allow(unused_imports)]
 use confold_core::{
     compare as engine_compare, compare_at_with_progress as engine_compare_with_progress,
-    compare_file as engine_compare_file, full_equal, list_level as engine_list_level,
-    Capabilities, CompareConfig, CompareMethod, ContentReader, DiffEntry, DiffReport, DiffStatus,
-    EntryMeta, FilterSet, LocalSource, RelPath, Source, SourceError, SourceMut,
-    DEFAULT_LARGE_FILE_THRESHOLD,
+    compare_file as engine_compare_file, full_equal, list_level as engine_list_level, Capabilities,
+    CompareConfig, CompareMethod, ContentReader, DiffEntry, DiffReport, DiffStatus, EntryMeta,
+    FilterSet, LocalSource, RelPath, Source, SourceError, SourceMut, DEFAULT_LARGE_FILE_THRESHOLD,
 };
 #[allow(unused_imports)]
 use confold_s3::{S3Config, S3Source};
 #[allow(unused_imports)]
 use confold_sftp::{SftpAuth, SftpConfig, SftpSource};
+#[allow(unused_imports)]
+use confold_sync::{apply as sync_apply, ActionOutcome, SyncAction, SyncOp};
+#[allow(unused_imports)]
+use confold_textdiff::{diff_hunks, diff_text, is_binary_bytes, FileDiff, FileDiffHunks};
 #[allow(unused_imports)]
 use serde::{Deserialize, Serialize};
 #[allow(unused_imports)]
@@ -31,10 +36,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 #[allow(unused_imports)]
 use tauri::{AppHandle, Emitter, State};
-#[allow(unused_imports)]
-use confold_sync::{apply as sync_apply, ActionOutcome, SyncAction, SyncOp};
-#[allow(unused_imports)]
-use confold_textdiff::{diff_text, diff_hunks, is_binary_bytes, FileDiff, FileDiffHunks};
 
 /// Result of diffing two files: a text line/word diff, a binary byte-equality verdict, or a signal
 /// that the file exceeds `TEXT_CAP` and should be opened via the large-file flow (`diff_file_large`).
@@ -88,7 +89,9 @@ pub(crate) fn read_side_cached(
     let dates = file_dates(src, rel);
     match src.open(rel) {
         Ok(reader) => {
-            if reader.len() > cap { return Err(too_large(&rel.to_string(), cap)); }
+            if reader.len() > cap {
+                return Err(too_large(&rel.to_string(), cap));
+            }
             Ok((read_all(reader.as_ref()), dates.0, dates.1))
         }
         Err(_) => Ok((Vec::new(), dates.0, dates.1)), // missing on this side → empty (one-sided view)
@@ -99,22 +102,51 @@ pub(crate) fn read_side_cached(
 /// byte-equality verdict. Guards file size (> TEXT_CAP → error). Uses the cached source so an
 /// existing SFTP connection is reused instead of building a new one — avoids the full handshake.
 #[tauri::command]
-pub(crate) fn diff_file(state: State<AppState>, left: FileRef, right: FileRef) -> Result<DiffFileResult, String> {
+pub(crate) fn diff_file(
+    state: State<AppState>,
+    left: FileRef,
+    right: FileRef,
+) -> Result<DiffFileResult, String> {
     let src_l = cached_source(&state, &left.source)?;
     let src_r = cached_source(&state, &right.source)?;
-    diff_file_inner(src_l.as_ref(), &rel_from_str(&left.rel), src_r.as_ref(), &rel_from_str(&right.rel))
+    diff_file_inner(
+        src_l.as_ref(),
+        &rel_from_str(&left.rel),
+        src_r.as_ref(),
+        &rel_from_str(&right.rel),
+    )
 }
 
 /// Core of [`diff_file`], over already-built sources (so it's unit-testable without Tauri `State`).
-pub(crate) fn diff_file_inner(src_l: &dyn Source, rel_l: &RelPath, src_r: &dyn Source, rel_r: &RelPath) -> Result<DiffFileResult, String> {
+pub(crate) fn diff_file_inner(
+    src_l: &dyn Source,
+    rel_l: &RelPath,
+    src_r: &dyn Source,
+    rel_r: &RelPath,
+) -> Result<DiffFileResult, String> {
     // If either side exceeds TEXT_CAP, signal the UI to use the large-file flow instead of erroring.
-    let left_size  = src_l.open(rel_l).map(|r| r.len()).unwrap_or(0);
+    let left_size = src_l.open(rel_l).map(|r| r.len()).unwrap_or(0);
     let right_size = src_r.open(rel_r).map(|r| r.len()).unwrap_or(0);
     if left_size > TEXT_CAP || right_size > TEXT_CAP {
         return Ok(DiffFileResult {
-            result: DiffResult::TooLarge { left_size, right_size },
-            left: FileMeta { fp: String::new(), eol: "\n".into(), final_nl: false, mtime: None, created: None },
-            right: FileMeta { fp: String::new(), eol: "\n".into(), final_nl: false, mtime: None, created: None },
+            result: DiffResult::TooLarge {
+                left_size,
+                right_size,
+            },
+            left: FileMeta {
+                fp: String::new(),
+                eol: "\n".into(),
+                final_nl: false,
+                mtime: None,
+                created: None,
+            },
+            right: FileMeta {
+                fp: String::new(),
+                eol: "\n".into(),
+                final_nl: false,
+                mtime: None,
+                created: None,
+            },
         });
     }
     let (lb, l_mtime, l_created) = read_side_cached(src_l, rel_l, TEXT_CAP)?;
@@ -171,8 +203,20 @@ pub(crate) fn diff_file_inner(src_l: &dyn Source, rel_l: &RelPath, src_r: &dyn S
 #[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum LargeDiffResult {
-    TextHunks { hunks: FileDiffHunks, left: FileMeta, right: FileMeta, left_size: u64, right_size: u64 },
-    Binary { identical: bool, left: FileMeta, right: FileMeta, left_size: u64, right_size: u64 },
+    TextHunks {
+        hunks: FileDiffHunks,
+        left: FileMeta,
+        right: FileMeta,
+        left_size: u64,
+        right_size: u64,
+    },
+    Binary {
+        identical: bool,
+        left: FileMeta,
+        right: FileMeta,
+        left_size: u64,
+        right_size: u64,
+    },
 }
 
 /// The large-file diff (for files over `TEXT_CAP`). Detects binary vs text from a bounded prefix, then:
@@ -206,11 +250,15 @@ pub(crate) fn diff_file_large(
     // Open each side (missing → None, treated as empty / one-sided).
     let reader_l = src_l.open(&rel_l).ok();
     let reader_r = src_r.open(&rel_r).ok();
-    let left_size  = reader_l.as_ref().map(|r| r.len()).unwrap_or(0);
+    let left_size = reader_l.as_ref().map(|r| r.len()).unwrap_or(0);
     let right_size = reader_r.as_ref().map(|r| r.len()).unwrap_or(0);
 
     // Sniff binary from a bounded prefix (HEX_CAP is plenty; also serves as the binary fingerprint).
-    let prefix = |r: &Option<Box<dyn ContentReader>>| r.as_ref().map(|r| read_prefix(r.as_ref(), HEX_CAP)).unwrap_or_default();
+    let prefix = |r: &Option<Box<dyn ContentReader>>| {
+        r.as_ref()
+            .map(|r| read_prefix(r.as_ref(), HEX_CAP))
+            .unwrap_or_default()
+    };
     let pre_l = prefix(&reader_l);
     let pre_r = prefix(&reader_r);
 
@@ -222,23 +270,55 @@ pub(crate) fn diff_file_large(
         };
         return Ok(LargeDiffResult::Binary {
             identical,
-            left:  FileMeta { fp: fingerprint(&pre_l), eol: "\n".into(), final_nl: false, mtime: l_mtime, created: l_created },
-            right: FileMeta { fp: fingerprint(&pre_r), eol: "\n".into(), final_nl: false, mtime: r_mtime, created: r_created },
-            left_size, right_size,
+            left: FileMeta {
+                fp: fingerprint(&pre_l),
+                eol: "\n".into(),
+                final_nl: false,
+                mtime: l_mtime,
+                created: l_created,
+            },
+            right: FileMeta {
+                fp: fingerprint(&pre_r),
+                eol: "\n".into(),
+                final_nl: false,
+                mtime: r_mtime,
+                created: r_created,
+            },
+            left_size,
+            right_size,
         });
     }
 
     // Text: read content up to `cap` (truncated, not rejected — the warning says "up to N MB").
-    let lb = reader_l.as_ref().map(|r| read_prefix(r.as_ref(), cap as usize)).unwrap_or_default();
-    let rb = reader_r.as_ref().map(|r| read_prefix(r.as_ref(), cap as usize)).unwrap_or_default();
+    let lb = reader_l
+        .as_ref()
+        .map(|r| read_prefix(r.as_ref(), cap as usize))
+        .unwrap_or_default();
+    let rb = reader_r
+        .as_ref()
+        .map(|r| read_prefix(r.as_ref(), cap as usize))
+        .unwrap_or_default();
     let l_str = String::from_utf8_lossy(&lb).into_owned();
     let r_str = String::from_utf8_lossy(&rb).into_owned();
     let hunks = diff_hunks(&l_str, &r_str, ctx, max_h, start);
     Ok(LargeDiffResult::TextHunks {
         hunks,
-        left:  FileMeta { fp: fingerprint(&lb), eol: detect_eol(&l_str).to_string(), final_nl: l_str.ends_with('\n'), mtime: l_mtime, created: l_created },
-        right: FileMeta { fp: fingerprint(&rb), eol: detect_eol(&r_str).to_string(), final_nl: r_str.ends_with('\n'), mtime: r_mtime, created: r_created },
-        left_size, right_size,
+        left: FileMeta {
+            fp: fingerprint(&lb),
+            eol: detect_eol(&l_str).to_string(),
+            final_nl: l_str.ends_with('\n'),
+            mtime: l_mtime,
+            created: l_created,
+        },
+        right: FileMeta {
+            fp: fingerprint(&rb),
+            eol: detect_eol(&r_str).to_string(),
+            final_nl: r_str.ends_with('\n'),
+            mtime: r_mtime,
+            created: r_created,
+        },
+        left_size,
+        right_size,
     })
 }
 
@@ -316,15 +396,29 @@ pub(crate) struct HexCompare {
 /// `truncated` if either exceeds the cap. Works for files of any size (prefix only — never rejects).
 /// Uses the cached source so a binary opened from a folder compare reuses the existing connection.
 #[tauri::command]
-pub(crate) fn hex_compare(state: State<AppState>, left: FileRef, right: FileRef) -> Result<HexCompare, String> {
+pub(crate) fn hex_compare(
+    state: State<AppState>,
+    left: FileRef,
+    right: FileRef,
+) -> Result<HexCompare, String> {
     let src_l = cached_source(&state, &left.source)?;
     let src_r = cached_source(&state, &right.source)?;
-    Ok(hex_compare_inner(src_l.as_ref(), &rel_from_str(&left.rel), src_r.as_ref(), &rel_from_str(&right.rel)))
+    Ok(hex_compare_inner(
+        src_l.as_ref(),
+        &rel_from_str(&left.rel),
+        src_r.as_ref(),
+        &rel_from_str(&right.rel),
+    ))
 }
 
 /// Core of [`hex_compare`], over already-built sources (unit-testable). Reads each side's first
 /// `HEX_CAP` bytes (prefix only — never rejects a large file); `*_len` are the true sizes.
-pub(crate) fn hex_compare_inner(src_l: &dyn Source, rel_l: &RelPath, src_r: &dyn Source, rel_r: &RelPath) -> HexCompare {
+pub(crate) fn hex_compare_inner(
+    src_l: &dyn Source,
+    rel_l: &RelPath,
+    src_r: &dyn Source,
+    rel_r: &RelPath,
+) -> HexCompare {
     let read_hex = |src: &dyn Source, rel: &RelPath| -> (Vec<u8>, u64) {
         match src.open(rel) {
             Ok(reader) => (read_prefix(reader.as_ref(), HEX_CAP), reader.len()),
@@ -373,7 +467,12 @@ pub(crate) struct FieldSpec {
 }
 
 impl FieldSpec {
-    pub(crate) fn new(key: &'static str, label: &'static str, kind: &'static str, required: bool) -> Self {
+    pub(crate) fn new(
+        key: &'static str,
+        label: &'static str,
+        kind: &'static str,
+        required: bool,
+    ) -> Self {
         FieldSpec {
             key,
             label,

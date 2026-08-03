@@ -4,3 +4,6 @@
 
 # Graphify knowledge graph (generated, regenerable via `graphify .`)
 graphify-out/
+
+# local agent state (omo evidence, etc.)
+.omo/

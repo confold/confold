@@ -3,6 +3,7 @@
   // view-specific right slot, and the plan-review OK/Skip (or a read-only badge). Keeps the three views
   // visually consistent; each view renders its own content-specific controls bar BELOW this header.
   import type { Snippet } from "svelte";
+  import Settings from "@lucide/svelte/icons/settings";
 
   let {
     name,
@@ -10,6 +11,7 @@
     readOnly = false,
     onkeep,
     onskip,
+    onsettings,
     right,
   }: {
     name: string;
@@ -19,18 +21,32 @@
     /** Plan-review decision callbacks (shown as OK / ✕ Skip when provided). */
     onkeep?: () => void;
     onskip?: () => void;
+    onsettings?: (trigger: HTMLButtonElement) => void;
     /** Optional view-specific right-side content (e.g. the text view's change counts). */
     right?: Snippet;
   } = $props();
 </script>
 
 <div class="fvh">
+  <img class="fvh-logo" src="/confold-mark.png" alt="Confold" />
   {#if onback}
     <button class="ghost back" type="button" onclick={onback} title="Back" aria-label="back">←</button>
   {/if}
   <span class="fvh-name">{name}</span>
   <span class="spacer"></span>
   {#if right}{@render right()}{/if}
+  {#if onsettings}
+    <button
+      class="ghost settings"
+      type="button"
+      aria-label="Open settings"
+      aria-haspopup="dialog"
+      title="Settings"
+      onclick={(event) => onsettings(event.currentTarget)}
+    >
+      <Settings size={17} strokeWidth={2} aria-hidden="true" />
+    </button>
+  {/if}
   {#if onskip || onkeep}
     {#if onskip}<button class="ghost skip-btn" onclick={onskip}>✕ Skip</button>{/if}
     {#if onkeep}<button class="keep-btn" onclick={onkeep}>OK</button>{/if}
@@ -45,6 +61,11 @@
     align-items: center;
     gap: 0.6rem;
     padding: 0.4rem 0;
+    flex: none;
+  }
+  .fvh-logo {
+    width: auto;
+    height: 1.5rem;
     flex: none;
   }
   .fvh-name {
@@ -76,6 +97,14 @@
     line-height: 1;
     font-size: 1rem;
   }
+  .settings {
+    display: inline-grid;
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
+    place-items: center;
+    flex: none;
+  }
   .keep-btn {
     border-color: #396cd8;
     background: #396cd8;
@@ -99,5 +128,8 @@
     border: 1px solid rgba(128, 128, 128, 0.4);
     border-radius: 4px;
     padding: 0.1em 0.4em;
+  }
+  @media (max-width: 38rem) {
+    .fvh { gap: 0.3rem; }
   }
 </style>
