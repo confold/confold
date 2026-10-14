@@ -2,8 +2,10 @@
   // Modal to configure one side's data source: paste a URL to autofill, or pick a type → fill its form
   // (rendered from the backend `source_types()` catalog). Emits the assembled `SourceSpec` on confirm.
   import { commands } from "$lib/commands";
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { open as openDialog } from "@tauri-apps/plugin-dialog";
+  import NuxeoPathPicker from "./NuxeoPathPicker.svelte";
+  import SourceIcon from "./SourceIcon.svelte";
   import type { SourceTypeInfo, SourceSpec } from "$lib/types";
   import {
     parseSourceUrl,
@@ -45,67 +47,56 @@
   });
   let typeId = $state<string | null>(null);
   let values = $state<FieldValues>({});
+  /** Per-field reveal state for password inputs (the eye toggle). */
+  let revealedSecrets = $state<Record<string, boolean>>({});
+  let browsingNuxeo = $state(false);
+  let nuxeoBrowseButton = $state<HTMLButtonElement | undefined>();
+  /** Directory hint when no verification ran: folder/file picker choice, or the Nuxeo browser (dir). */
+  let dirHint = $state<boolean | null>(null);
 
-  // Connection auto-test: runs (debounced) once the required fields are filled; its result gates "Select".
+  // Connection checks are USER-invoked only ("Verify connection"): auto-probing on every keystroke
+  // can lock the account on APIs that throttle failed logins (Nuxeo does). A completed form is
+  // selectable without a check; the verify button is there when the user wants reassurance.
   let testing = $state(false);
   let testResult = $state<{ ok: boolean; is_dir: boolean; message: string } | null>(null);
   let testSeq = 0;
-  // Set to true when the user pressed Enter while the test was still running — auto-confirms on success.
-  let pendingConfirm = $state(false);
 
   const info = $derived(types.find((t) => t.id === typeId) ?? null);
   const fields = $derived(info ? visibleFields(info, values) : []);
   const missing = $derived(info ? missingRequired(info, values) : []);
-  const canConfirm = $derived(info !== null && missing.length === 0 && testResult?.ok === true);
+  const canConfirm = $derived(info !== null && missing.length === 0);
 
-  // Whenever the form becomes complete, probe the connection (debounced; latest call wins via `testSeq`).
-  // Also resets pendingConfirm so a queued Enter from a previous form state doesn't fire for a new one.
+  // Any form edit invalidates a previous verification (it no longer describes these values) and any
+  // in-flight verify (its seq is now stale, so its late response is discarded, not shown).
   $effect(() => {
-    const ready = info !== null && missingRequired(info, values).length === 0;
-    pendingConfirm = false;
-    if (!ready) {
-      testResult = null;
-      testing = false;
-      return;
-    }
-    const spec = buildSpec(typeId!, { ...values });
-    const seq = ++testSeq;
-    testing = true;
+    void JSON.stringify(values);
+    void typeId;
+    testSeq += 1;
     testResult = null;
-    const timer = setTimeout(async () => {
-      try {
-        const r = await commands.testSource(spec);
-        if (seq === testSeq) {
-          testResult = { ok: r.ok, is_dir: r.is_dir, message: r.message };
-          testing = false;
-        }
-      } catch (e) {
-        if (seq === testSeq) {
-          testResult = { ok: false, is_dir: false, message: String(e) };
-          testing = false;
-        }
-      }
-    }, 450);
-    return () => clearTimeout(timer);
+    testing = false;
   });
 
-  // Auto-confirm once the test passes when the user had already pressed Enter.
-  $effect(() => {
-    if (pendingConfirm && canConfirm) {
-      pendingConfirm = false;
-      confirm();
-    }
-  });
-
-  // Enter in any text/number/password input: confirm immediately if ready, else queue for test completion.
+  // Enter in any text/number/password input: confirm as soon as the required fields are filled.
   function onEnter(e: KeyboardEvent) {
     if (e.key !== "Enter") return;
     e.preventDefault();
     applyUrl(); // flush any pending URL edit before checking canConfirm
-    if (canConfirm) {
-      confirm();
-    } else if (info !== null && missing.length === 0) {
-      pendingConfirm = true;
+    if (canConfirm) confirm();
+  }
+
+  async function verify() {
+    if (!typeId || missing.length > 0 || testing) return;
+    const spec = buildSpec(typeId, { ...values });
+    const seq = ++testSeq;
+    testing = true;
+    testResult = null;
+    try {
+      const r = await commands.testSource(spec);
+      if (seq === testSeq) testResult = { ok: r.ok, is_dir: r.is_dir, message: r.message };
+    } catch (e) {
+      if (seq === testSeq) testResult = { ok: false, is_dir: false, message: String(e) };
+    } finally {
+      if (seq === testSeq) testing = false;
     }
   }
 
@@ -117,9 +108,19 @@
   }
 
   function selectType(id: string) {
+    browsingNuxeo = false;
     typeId = id;
     const t = types.find((x) => x.id === id);
     values = t ? seedDefaults(t) : {};
+    dirHint = null;
+  }
+
+  async function closeNuxeoBrowser(path?: string) {
+    if (path !== undefined) values.root = path;
+    browsingNuxeo = false;
+    dirHint = true;
+    await tick();
+    nuxeoBrowseButton?.focus();
   }
 
   // Paste-a-URL autofill: parse → select the type and prefill its fields over the type defaults.
@@ -131,6 +132,8 @@
     lastAppliedUrl = url;
     const parsed = parseSourceUrl(url);
     if (!parsed) return;
+    browsingNuxeo = false;
+    dirHint = null;
     const t = types.find((x) => x.id === parsed.kind);
     values = { ...(t ? seedDefaults(t) : {}), ...parsed.fields };
     typeId = parsed.kind;
@@ -142,15 +145,19 @@
       multiple: false,
       title: `Choose a ${directory ? "folder" : "file"}`,
     });
-    if (typeof sel === "string") values[key] = sel;
+    if (typeof sel === "string") {
+      values[key] = sel;
+      dirHint = directory;
+    }
   }
 
-  function inputType(kind: string): string {
-    return kind === "number" ? "number" : kind === "password" ? "password" : "text";
+  function inputType(kind: string, revealed: boolean): string {
+    if (kind === "password") return revealed ? "text" : "password";
+    return kind === "number" ? "number" : "text";
   }
 
   function confirm() {
-    if (canConfirm && typeId) onconfirm(buildSpec(typeId, values), testResult?.is_dir ?? true);
+    if (canConfirm && typeId) onconfirm(buildSpec(typeId, values), testResult?.is_dir ?? dirHint ?? true);
   }
 </script>
 
@@ -164,43 +171,59 @@
   <div class="modal" role="dialog" aria-modal="true" aria-label={`Configure ${title}`}>
     <h2>{title}</h2>
 
-    <label class="url">
-      Paste a URL
-      <input
-        bind:this={urlInput}
-        bind:value={url}
-        oninput={applyUrl}
-        onpaste={() => setTimeout(applyUrl, 0)}
-        onkeydown={onEnter}
-        placeholder="sftp://user@host/path  ·  s3://key:secret@host:port/bucket  ·  /local/path"
-        spellcheck="false"
+    {#if !browsingNuxeo}
+      <label class="url">
+        Paste a URL
+        <input
+          bind:this={urlInput}
+          bind:value={url}
+          oninput={applyUrl}
+          onpaste={() => setTimeout(applyUrl, 0)}
+          onkeydown={onEnter}
+          placeholder="sftp://user@host/path  ·  s3://key:secret@host:port/bucket  ·  /local/path"
+          spellcheck="false"
+        />
+      </label>
+
+      <div class="types">
+        {#each types as t (t.id)}
+          <button class="type" class:on={typeId === t.id} type="button" onclick={() => selectType(t.id)}>
+            <SourceIcon icon={t.icon} alt={t.icon === "nuxeo" ? t.name : ""} inverse={typeId === t.id && t.icon === "nuxeo"} />
+            {#if t.icon !== "nuxeo"}{t.name}{/if}
+          </button>
+        {/each}
+      </div>
+    {/if}
+
+    {#if info && browsingNuxeo && typeId === "nuxeo"}
+      <NuxeoPathPicker
+        spec={buildSpec("nuxeo", { ...values })}
+        startPath={values.root || "/"}
+        onselect={(path) => closeNuxeoBrowser(path)}
+        oncancel={() => closeNuxeoBrowser()}
       />
-    </label>
-
-    <div class="types">
-      {#each types as t (t.id)}
-        <button class="type" class:on={typeId === t.id} type="button" onclick={() => selectType(t.id)}>
-          <span class="ico">{t.icon}</span>{t.name}
-        </button>
-      {/each}
-    </div>
-
-    {#if info}
+    {:else if info}
       <div class="form">
         {#each fields as f (f.key)}
-          <label class="field">
-            <span class="lbl">
+          <div class="field">
+            <label class="lbl" for={`field-${f.key}`}>
               {f.label}{#if f.required}<span class="req">*</span>{/if}
               {#if f.secret}<span class="lock" title="Secret — not stored">🔒</span>{/if}
-            </span>
+            </label>
             {#if f.kind === "select"}
-              <select class:missing={missing.includes(f.key)} value={values[f.key] ?? ""} onchange={(e) => (values[f.key] = e.currentTarget.value)}>
+              <select
+                id={`field-${f.key}`}
+                class:missing={missing.includes(f.key)}
+                value={values[f.key] ?? ""}
+                onchange={(e) => (values[f.key] = e.currentTarget.value)}
+              >
                 {#each f.options as opt (opt)}
                   <option value={opt}>{opt}</option>
                 {/each}
               </select>
             {:else if f.kind === "textarea"}
               <textarea
+                id={`field-${f.key}`}
                 class:missing={missing.includes(f.key)}
                 rows="4"
                 value={values[f.key] ?? ""}
@@ -210,31 +233,50 @@
             {:else}
               <span class="path-row">
                 <input
+                  id={`field-${f.key}`}
                   class:missing={missing.includes(f.key)}
-                  type={inputType(f.kind)}
+                  type={inputType(f.kind, revealedSecrets[f.key] === true)}
                   value={values[f.key] ?? ""}
                   oninput={(e) => (values[f.key] = e.currentTarget.value)}
                   onkeydown={onEnter}
                   spellcheck="false"
                 />
+                {#if f.kind === "password"}
+                  <button
+                    class="ghost sm"
+                    type="button"
+                    aria-label={revealedSecrets[f.key] ? "Hide password" : "Show password"}
+                    title={revealedSecrets[f.key] ? "Hide password" : "Show password"}
+                    onclick={() => (revealedSecrets[f.key] = !revealedSecrets[f.key])}
+                  >{revealedSecrets[f.key] ? "🙈" : "👁"}</button>
+                {/if}
                 {#if f.kind === "path" && typeId === "fs"}
                   <button class="ghost sm" type="button" onclick={() => browse(f.key, true)}>📁 Folder</button>
                   <button class="ghost sm" type="button" onclick={() => browse(f.key, false)}>📄 File</button>
+                {:else if f.kind === "path" && typeId === "nuxeo"}
+                  <button
+                    bind:this={nuxeoBrowseButton}
+                    class="ghost sm"
+                    type="button"
+                    disabled={!values.url?.trim() || !values.username?.trim() || !values.password}
+                    onclick={() => (browsingNuxeo = true)}
+                  >Browse routes</button>
                 {/if}
               </span>
             {/if}
-          </label>
+          </div>
         {/each}
       </div>
     {:else}
       <p class="hint">Choose a source type, or paste a URL above.</p>
     {/if}
 
-    {#if info && missing.length === 0}
+    {#if info && missing.length === 0 && !browsingNuxeo}
       <div class="status">
-        {#if testing}
-          <span class="testing">Testing connection…</span>
-        {:else if testResult}
+        <button class="ghost sm" type="button" disabled={testing} onclick={verify}>
+          {testing ? "Testing…" : "Verify connection"}
+        </button>
+        {#if testResult}
           {#if testResult.ok}
             <span class="ok">✓ {testResult.message}</span>
           {:else}
@@ -244,10 +286,12 @@
       </div>
     {/if}
 
-    <div class="actions">
-      <button class="ghost" type="button" onclick={oncancel}>Cancel</button>
-      <button type="button" disabled={!canConfirm} onclick={confirm}>Select {title.toLowerCase()}</button>
-    </div>
+    {#if !browsingNuxeo}
+      <div class="actions">
+        <button class="ghost" type="button" onclick={oncancel}>Cancel</button>
+        <button type="button" disabled={!canConfirm} onclick={confirm}>Select {title.toLowerCase()}</button>
+      </div>
+    {/if}
   </div>
 </div>
 
@@ -305,10 +349,6 @@
   .type.on {
     background: #396cd8;
     color: #fff;
-    border-color: #396cd8;
-  }
-  .type .ico {
-    font-size: 1.1em;
   }
   .form {
     display: flex;
@@ -390,13 +430,12 @@
   }
   .status {
     display: flex;
+    align-items: center;
     justify-content: center;
+    flex-wrap: wrap;
+    gap: 0.6rem;
     min-height: 1.7rem;
     margin-top: 0.2rem;
-  }
-  .testing {
-    font-size: 0.82rem;
-    opacity: 0.6;
   }
   .ok,
   .err {
