@@ -30,6 +30,7 @@
   import HexView from "./HexView.svelte";
   import ImageView from "./ImageView.svelte";
   import SourcePicker from "./SourcePicker.svelte";
+  import SourceIcon from "./SourceIcon.svelte";
   import EntryTools from "./EntryTools.svelte";
   import { isImagePath } from "$lib/imagediff";
   import { isSemanticPath } from "$lib/semantic";
@@ -1330,6 +1331,23 @@
     if (focused) flattenInto(focused.children, 0, out, statusOf);
     return out;
   });
+  // "Select all" covers exactly the rows on screen (current level + expanded folders) — what the
+  // user sees is what gets selected; overlapping dir selections are deduped by the backend.
+  const allSelected = $derived(
+    rows.length > 0 && rows.every((r) => selection.has(keyOf(r.entry))),
+  );
+  function toggleSelectAll() {
+    if (allSelected) {
+      for (const r of rows) selection.delete(keyOf(r.entry));
+    } else {
+      for (const r of rows) selection.set(keyOf(r.entry), r.entry);
+    }
+  }
+  let selectAllBox = $state<HTMLInputElement | undefined>();
+  // Partial selections show the dash: neither all-on nor all-off.
+  $effect(() => {
+    if (selectAllBox) selectAllBox.indeterminate = selectedCount > 0 && !allSelected;
+  });
   const start = $derived(Math.max(0, Math.floor(scrollTop / ROW_H) - OVERSCAN));
   const end = $derived(Math.min(rows.length, start + Math.ceil(viewportH / ROW_H) + OVERSCAN * 2));
   const visible = $derived(rows.slice(start, end).map((r, i) => ({ row: r, index: start + i })));
@@ -1559,8 +1577,8 @@
   <section class="sources">
     <div class="side">
       {#if originSpec}
-        <button class="chosen" class:stale={originStale} type="button" onclick={() => { recentPrefill = originSpec; picking = "origin"; }}>
-          <span class="ico">{slugOf(originSpec).icon}</span>
+        <button class="chosen" class:stale={originStale} type="button" title={slugOf(originSpec).label} onclick={() => { recentPrefill = originSpec; picking = "origin"; }}>
+          <SourceIcon icon={slugOf(originSpec).icon} size="compact" />
           <span class="slug">{slugOf(originSpec).label}</span>
           <span class="change">change</span>
         </button>
@@ -1574,7 +1592,7 @@
           <span class="rlabel">Recent sources:</span>
           {#each originRecents.filter((r) => !originSpec || slugOf(r.spec).label !== slugOf(originSpec).label) as r (slugOf(r.spec).label)}
             <button class="recent" class:stale={r.stale} type="button" onclick={() => pickRecent(r, "origin")} title={slugOf(r.spec).label}>
-              <span class="ico">{slugOf(r.spec).icon}</span><span class="rslug">{slugOf(r.spec).label}</span>
+              <SourceIcon icon={slugOf(r.spec).icon} size="compact" /><span class="rslug">{slugOf(r.spec).label}</span>
             </button>
           {/each}
         </div>
@@ -1583,8 +1601,8 @@
 
     <div class="side">
       {#if destSpec}
-        <button class="chosen" class:stale={destStale} type="button" onclick={() => { recentPrefill = destSpec; picking = "dest"; }}>
-          <span class="ico">{slugOf(destSpec).icon}</span>
+        <button class="chosen" class:stale={destStale} type="button" title={slugOf(destSpec).label} onclick={() => { recentPrefill = destSpec; picking = "dest"; }}>
+          <SourceIcon icon={slugOf(destSpec).icon} size="compact" />
           <span class="slug">{slugOf(destSpec).label}</span>
           <span class="change">change</span>
         </button>
@@ -1598,7 +1616,7 @@
           <span class="rlabel">Recent destinations:</span>
           {#each destRecents.filter((r) => !destSpec || slugOf(r.spec).label !== slugOf(destSpec).label) as r (slugOf(r.spec).label)}
             <button class="recent" class:stale={r.stale} type="button" onclick={() => pickRecent(r, "dest")} title={slugOf(r.spec).label}>
-              <span class="ico">{slugOf(r.spec).icon}</span><span class="rslug">{slugOf(r.spec).label}</span>
+              <SourceIcon icon={slugOf(r.spec).icon} size="compact" /><span class="rslug">{slugOf(r.spec).label}</span>
             </button>
           {/each}
         </div>
@@ -1666,11 +1684,11 @@
       aria-label="Back to source selection"
     >←</button>
     <button class="mini-src" type="button" onclick={tryLeaveToSources} title="Back to source selection">
-      {#if originSpec}<span class="ico">{slugOf(originSpec).icon}</span><span class="mini-slug">{slugOf(originSpec).label}</span>{/if}
+      {#if originSpec}<SourceIcon icon={slugOf(originSpec).icon} size="compact" /><span class="mini-slug">{slugOf(originSpec).label}</span>{/if}
     </button>
     <span class="arrow">→</span>
     <button class="mini-src" type="button" onclick={tryLeaveToSources} title="Back to source selection">
-      {#if destSpec}<span class="ico">{slugOf(destSpec).icon}</span><span class="mini-slug">{slugOf(destSpec).label}</span>{/if}
+      {#if destSpec}<SourceIcon icon={slugOf(destSpec).icon} size="compact" /><span class="mini-slug">{slugOf(destSpec).label}</span>{/if}
     </button>
     {#if report}
       <button class="mini-refresh" type="button" onclick={refresh} title="Re-scan comparison">↺</button>
@@ -1804,6 +1822,17 @@
       </div>
     {/if}
     <div class="actions">
+      <label class="selall">
+        <input
+          bind:this={selectAllBox}
+          type="checkbox"
+          checked={allSelected}
+          onchange={toggleSelectAll}
+          aria-label="Select all rows"
+        />
+        select all
+      </label>
+      <span class="seln">{selectedCount}/{rows.length} selected</span>
       <label class="sort">sort:
         <select bind:value={sortState.key}>
           <option value="name">name</option>
@@ -1812,7 +1841,6 @@
           <option value="mtime">mtime</option>
         </select>
       </label>
-      <span class="seln">{selectedCount}/{rows.length} selected</span>
       <button disabled={!canCopyLR} onclick={() => startAction("copy_left_to_right", "Copy left → right")}>Copy →</button>
       <button disabled={!canCopyRL} onclick={() => startAction("copy_right_to_left", "Copy right → left")}>← Copy</button>
       <button class="danger" disabled={!canDelL} onclick={() => startAction("delete_left", "Delete on left")}>Delete left</button>
@@ -2145,7 +2173,7 @@
     gap: 0.5rem;
     background: rgba(46, 160, 67, 0.14);
     color: inherit;
-    border: 1.5px solid #2ea043;
+    border: 1px solid rgba(128, 128, 128, 0.3);
     border-radius: 10px;
     padding: 0.8rem;
     text-align: left;
@@ -2154,10 +2182,6 @@
   .chosen.stale {
     background: rgba(192, 57, 43, 0.1);
     border-color: #c0392b;
-  }
-  .chosen .ico {
-    font-size: 1.2em;
-    flex: none;
   }
   .chosen .slug {
     flex: 1;
@@ -2517,10 +2541,21 @@
     gap: 0.5rem;
     padding: 0.6rem 0;
   }
+  .selall {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.82rem;
+    white-space: nowrap;
+    cursor: pointer;
+  }
   .actions .seln {
     font-size: 0.82rem;
     opacity: 0.7;
-    margin-right: auto;
+    white-space: nowrap;
+  }
+  .actions button:first-of-type {
+    margin-left: auto;
   }
   .actions button {
     padding: 0.3em 0.6em;
