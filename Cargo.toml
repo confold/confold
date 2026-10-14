@@ -4,7 +4,7 @@ resolver = "2"
 members = ["crates/confold-vfs", "crates/confold-core", "crates/confold-sync", "crates/confold-textdiff", "crates/confold-semantic", "crates/confold-provider", "crates/confold-cli", "crates/confold-sftp"]
 # The Tauri desktop app builds standalone (its own heavy Tauri deps) and path-depends on the engine
 # crates; keep it out of the engine workspace so `cargo build/test/lint` here stay fast.
-exclude = ["confold-app", "crates/confold-s3"]
+exclude = ["confold-app", "crates/confold-s3", "crates/confold-nuxeo"]
 
 [workspace.package]
 version = "0.6.1"

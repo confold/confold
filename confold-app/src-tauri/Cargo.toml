@@ -30,6 +30,7 @@ confold-provider = { path = "../../crates/confold-provider" }
 confold-semantic = { path = "../../crates/confold-semantic" }
 confold-sftp = { path = "../../crates/confold-sftp" }
 confold-s3 = { path = "../../crates/confold-s3" }
+confold-nuxeo = { path = "../../crates/confold-nuxeo" }
 keyring = "4.1"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]

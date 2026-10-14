@@ -64,6 +64,7 @@ use semantic::{
     semantic_review,
 };
 use shell::{install_shell_integration, shell_integration_status, uninstall_shell_integration};
+use sources::{nuxeo_browse_routes, nuxeo_search_routes};
 
 pub fn run() {
     let mut builder = tauri::Builder::default()
@@ -82,6 +83,8 @@ pub fn run() {
             compare,
             compare_level,
             test_source,
+            nuxeo_browse_routes,
+            nuxeo_search_routes,
             migrate_actions,
             sync_actions,
             migrate_apply,
@@ -273,6 +276,8 @@ mod tests {
         let summary = run_migrate(
             &left,
             &right,
+            Some(&left),
+            Some(&right),
             &actions,
             || false,
             |o, _reason| seen.push((o.rel_path.components().join("/"), o.ok)),
@@ -291,6 +296,8 @@ mod tests {
         let summary2 = run_migrate(
             &left,
             &right2,
+            Some(&left),
+            Some(&right2),
             &actions,
             || applied.get() >= 1, // polled BEFORE each action
             |_, _reason| applied.set(applied.get() + 1),
@@ -330,6 +337,8 @@ mod tests {
         let summary = run_migrate(
             &left,
             &right,
+            Some(&left),
+            Some(&right),
             &actions,
             || false,
             |o, _reason| outcomes.push((o.rel_path.components().join("/"), o.ok, o.error.clone())),
@@ -389,6 +398,8 @@ mod tests {
         let summary = run_migrate(
             &left,
             &right,
+            Some(&left),
+            Some(&right),
             &actions,
             || applied.get() >= 1, // cancel after the first leaf
             |_, _| applied.set(applied.get() + 1),
@@ -435,6 +446,8 @@ mod tests {
         let summary = run_migrate(
             &left,
             &right,
+            Some(&left),
+            Some(&right),
             &actions,
             || applied.get() >= 1,
             |_, _| applied.set(applied.get() + 1),
@@ -1097,6 +1110,31 @@ mod tests {
     }
 
     #[test]
+    fn write_sides_derives_targets_from_ops() {
+        use confold_sync::SyncOp;
+        assert_eq!(
+            write_sides([SyncOp::CopyLeftToRight].into_iter(), false),
+            (false, true)
+        );
+        assert_eq!(
+            write_sides([SyncOp::CopyRightToLeft].into_iter(), false),
+            (true, false)
+        );
+        assert_eq!(
+            write_sides(
+                [SyncOp::CopyLeftToRight, SyncOp::DeleteLeft].into_iter(),
+                false
+            ),
+            (true, true)
+        );
+        // A move deletes the origin even when every copy op targets the right.
+        assert_eq!(
+            write_sides([SyncOp::CopyLeftToRight].into_iter(), true),
+            (true, true)
+        );
+    }
+
+    #[test]
     fn test_source_reports_dir_file_and_missing() {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join("f.txt"), b"hi").unwrap();
@@ -1119,7 +1157,7 @@ mod tests {
     fn source_types_catalog_lists_registered_kinds() {
         let types = source_types();
         let ids: Vec<_> = types.iter().map(|t| t.id).collect();
-        assert_eq!(ids, vec!["fs", "sftp", "s3"]);
+        assert_eq!(ids, vec!["fs", "sftp", "s3", "nuxeo"]);
         let sftp = types.iter().find(|t| t.id == "sftp").unwrap();
         assert!(sftp.capabilities.write);
         assert!(sftp.fields.iter().any(|f| f.key == "host"));
@@ -1133,6 +1171,13 @@ mod tests {
             .fields
             .iter()
             .any(|f| f.key == "secret_access_key" && f.secret));
+        // Nuxeo registered read-only: capabilities gate it to compare/migrate-origin, never a write
+        // destination.
+        let nuxeo = types.iter().find(|t| t.id == "nuxeo").unwrap();
+        assert!(nuxeo.capabilities.list && nuxeo.capabilities.read);
+        assert!(!nuxeo.capabilities.write);
+        assert_eq!(nuxeo.icon, "nuxeo");
+        assert!(nuxeo.fields.iter().any(|f| f.key == "password" && f.secret));
     }
 
     #[test]

@@ -101,7 +101,40 @@ function delayed<T>(value: T, delayMs = 1_000): Promise<T> {
 }
 
 const responses: Record<string, (args?: Record<string, unknown>) => unknown> = {
-  source_types: () => [],
+  source_types: () => [
+    {
+      id: "nuxeo",
+      name: "Nuxeo",
+      icon: "nuxeo",
+      capabilities: { list: true, read: true, fingerprint: true, write: false },
+      fields: [
+        { key: "url", label: "Server URL (incl. /nuxeo context path)", kind: "text", required: true, secret: false, default: null, options: [], show_when: null },
+        { key: "username", label: "Username", kind: "text", required: true, secret: false, default: null, options: [], show_when: null },
+        { key: "password", label: "Password", kind: "password", required: true, secret: true, default: null, options: [], show_when: null },
+        { key: "root", label: "Document path", kind: "path", required: false, secret: false, default: "/", options: [], show_when: null },
+      ],
+    },
+  ],
+  test_source: () => ({ ok: true, is_dir: true, message: "Connected" }),
+  nuxeo_browse_routes: (args) => {
+    const path = String(args?.path ?? "/");
+    const pageIndex = Number(args?.pageIndex ?? 0);
+    const entries = path === "/"
+      ? [
+          { name: "default-domain", title: "Default domain", path: "/default-domain" },
+          { name: "system", title: "System", path: "/system" },
+        ]
+      : path === "/default-domain"
+        ? [{ name: "workspaces", title: "Workspaces", path: "/default-domain/workspaces" }]
+        : pageIndex === 1
+          ? [{ name: "archive", title: "Archive", path: `${path}/archive` }]
+          : [{ name: "contracts", title: "Contracts", path: `${path}/contracts` }];
+    return { entries, has_more: path === "/default-domain/workspaces" && pageIndex === 0 };
+  },
+  nuxeo_search_routes: (args) => ({
+    entries: [{ name: "signed-contracts", title: "Signed contracts", path: "/default-domain/workspaces/signed-contracts" }],
+    has_more: false,
+  }),
   load_recents: () => ({ origins: [], destinations: [] }),
   save_recents: () => undefined,
   shell_integration_status: () => ({ supported: true, installed: false }),

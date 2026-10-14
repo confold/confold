@@ -6,6 +6,7 @@
   import { onMount } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
   import { slugOf } from "$lib/sources";
+  import SourceIcon from "./SourceIcon.svelte";
   import type { SourceSpec } from "$lib/types";
   import { planItems, uncheckedCount, actionKey, type MigrateAction } from "$lib/migrate";
 
@@ -77,9 +78,9 @@
     <h2>Migration plan</h2>
 
     <p class="mig-dir">
-      {#if originSpec}<span class="ico">{slugOf(originSpec).icon}</span> {slugOf(originSpec).label}{/if}
+      {#if originSpec}<SourceIcon icon={slugOf(originSpec).icon} size="compact" /> {slugOf(originSpec).label}{/if}
       <span class="arrow">→</span>
-      {#if destSpec}<span class="ico">{slugOf(destSpec).icon}</span> {slugOf(destSpec).label}{/if}
+      {#if destSpec}<SourceIcon icon={slugOf(destSpec).icon} size="compact" /> {slugOf(destSpec).label}{/if}
     </p>
 
     <!-- Category counts -->

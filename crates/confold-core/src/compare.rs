@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use confold_vfs::{EntryMeta, RelPath, Source};
+use confold_vfs::{EntryMeta, RelPath, Source, SourceError};
 use rayon::prelude::*;
 
 use crate::config::{CompareConfig, CompareMethod};
@@ -119,8 +119,29 @@ fn compare_directory(
     read_files: bool,
     progress: ProgressFn,
 ) -> Result<Vec<DiffEntry>, EngineError> {
-    let left_entries = left.read_dir(rel)?;
-    let right_entries = right.read_dir(rel)?;
+    // List each side independently. BELOW the compare roots, a side whose directory does not exist
+    // (NotFound) contributes nothing, so drilling into a one-sided directory (e.g. lazy Nuxeo→local
+    // before any migration) classifies the existing side's children as one-sided instead of failing.
+    // At the roots themselves a missing directory is a configuration error and must fail loudly (the
+    // CLI's "exit 2 on missing root" contract); any other error — or both sides failing — also
+    // propagates: a permission/transport problem must never masquerade as "empty".
+    let lenient = !rel.is_root();
+    let (left_entries, right_entries) = match (left.read_dir(rel), right.read_dir(rel)) {
+        (Ok(l), Ok(r)) => (l, r),
+        (Err(e), Err(_)) => return Err(e.into()),
+        (Ok(l), Err(e)) if lenient && is_missing_dir(&e) => (l, Vec::new()),
+        (Err(e), Ok(r)) if lenient && is_missing_dir(&e) => (Vec::new(), r),
+        (Err(e), _) | (_, Err(e)) => return Err(e.into()),
+    };
+
+    /// `true` when a listing failure means "this directory does not exist here" (as opposed to a
+    /// permission or transport failure, which must surface as an error, not as an empty side).
+    fn is_missing_dir(err: &SourceError) -> bool {
+        matches!(
+            err,
+            SourceError::Io { source, .. } if source.kind() == std::io::ErrorKind::NotFound
+        )
+    }
 
     // Union by name; BTreeMap gives deterministic ordering.
     let mut by_name: BTreeMap<String, SidePair> = BTreeMap::new();

@@ -55,8 +55,8 @@ describe("command bindings → invoke contract", () => {
   it("plan/apply actions", () => {
     commands.planActions(SPEC, SPEC, []);
     expect(last()).toEqual(["plan_actions", { left: SPEC, right: SPEC, actions: [] }]);
-    commands.applyActions(SPEC, SPEC, []);
-    expect(last()).toEqual(["apply_actions", { left: SPEC, right: SPEC, actions: [] }]);
+    commands.applyActions(SPEC, SPEC, [], 9);
+    expect(last()).toEqual(["apply_actions", { left: SPEC, right: SPEC, actions: [], generation: 9 }]);
   });
 
   it("diffFile / diffFileLarge (camelCase startHunk etc.)", () => {
@@ -84,6 +84,19 @@ describe("command bindings → invoke contract", () => {
     expect(last()).toEqual(["source_types"]);
     commands.testSource(SPEC);
     expect(last()).toEqual(["test_source", { spec: SPEC }]);
+  });
+
+  it("Nuxeo route browse/search use camelCase invoke arguments", () => {
+    commands.nuxeoBrowseRoutes(SPEC, "/default-domain", 2);
+    expect(last()).toEqual([
+      "nuxeo_browse_routes",
+      { spec: SPEC, path: "/default-domain", pageIndex: 2 },
+    ]);
+    commands.nuxeoSearchRoutes(SPEC, "contracts", 1);
+    expect(last()).toEqual([
+      "nuxeo_search_routes",
+      { spec: SPEC, query: "contracts", pageIndex: 1 },
+    ]);
   });
 
   it("shell integration commands use the exact Tauri command names", () => {

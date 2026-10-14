@@ -37,14 +37,21 @@
   );
   // A dir present on both sides whose subtree hasn't been loaded yet (lazy/preload mode).
   const isPending = $derived(entry.status === "skipped" && entry.detail === "not descended");
+  // A dir that exists on only one side: lazily loadable too (its contents were not walked at listing).
+  const oneSidedDir = $derived(
+    entry.is_dir && (entry.status === "left_only" || entry.status === "right_only"),
+  );
   // A file present on both sides whose verdict is still being computed (streamed in via events).
   const isComparing = $derived(!entry.is_dir && entry.status === "skipped" && entry.detail === "comparing");
   // Still waiting: pending dir (no resolved status yet) or a comparing file (verdict not in yet).
   const stillPending = $derived((isPending && resolvedStatus === null) || isComparing);
   // The status to use for CSS class + marker once the dir has been resolved.
   const effectiveStatus = $derived<DiffStatus>(resolvedStatus ?? entry.status);
-  // Show a toggle arrow for dirs with children OR pending dirs (which will have children once expanded).
-  const hasChildren = $derived(entry.is_dir && (entry.children.length > 0 || isPending));
+  // Show a toggle arrow for dirs with children, pending dirs, and one-sided dirs (which will have
+  // children once expanded).
+  const hasChildren = $derived(
+    entry.is_dir && (entry.children.length > 0 || isPending || oneSidedDir),
+  );
   // Files present on both sides whose modified times differ by more than dateTol ms → flag orange.
   const datesDiffer = $derived(
     !entry.is_dir && entry.left !== null && entry.right !== null &&
@@ -65,7 +72,7 @@
     const key = keyOf(entry);
     const wasOpen = isOpen(key);
     toggleOpen(key);
-    if (isPending && !wasOpen) onexpand?.(entry);
+    if (!wasOpen && entry.children.length === 0 && (isPending || oneSidedDir)) onexpand?.(entry);
   }
 
   function size(meta: EntryMeta | null): string {
@@ -163,7 +170,7 @@
         const key = keyOf(entry);
         const wasOpen = isOpen(key);
         toggleOpen(key);
-        if (isPending && !wasOpen) onexpand?.(entry);
+        if (!wasOpen && entry.children.length === 0 && (isPending || oneSidedDir)) onexpand?.(entry);
       }} aria-label="toggle">{isOpen(keyOf(entry)) ? "▼" : "▶"}</button>
     {:else}
       <span class="toggle spacer"></span>
@@ -181,7 +188,7 @@
         <span class="box"><span class="h l"></span><span class="h r"></span></span>
       {/if}
     </span>
-    <span class="name">{entry.name}{entry.is_dir ? "/" : ""}</span>
+    <span class="name" title={entry.name}>{entry.name}{entry.is_dir ? "/" : ""}</span>
     {#if semantic}
       <button
         class="semantic-action"

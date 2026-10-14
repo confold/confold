@@ -7,7 +7,7 @@ import type { SourceSpec, SourceTypeInfo, FieldSpec, Capabilities } from "./type
 /** Form field values keyed by `FieldSpec.key` (dotted for nested, e.g. `auth.password`). */
 export type FieldValues = Record<string, string>;
 
-/** Emoji icon for a source type id — used by the type buttons and recents chips. */
+/** Icon token for a source type id — used by the type buttons and recents chips. */
 export function iconFor(type: string): string {
   switch (type) {
     case "fs":
@@ -16,6 +16,8 @@ export function iconFor(type: string): string {
       return "🌐";
     case "s3":
       return "☁️"; // matches the S3Kind catalog icon (backend) so chips and the picker agree
+    case "nuxeo":
+      return "nuxeo";
     default:
       return "📦";
   }
@@ -204,6 +206,12 @@ export function slugOf(spec: SourceSpec): { icon: string; label: string } {
     const host = (f.endpoint ?? "").replace(/^https?:\/\//i, "").replace(/\/+$/, "");
     const path = [f.bucket, f.prefix].map((s) => (s ?? "").trim()).filter(Boolean).join("/");
     return { icon, label: host ? `${host}/${path}` : path || "(bucket)" };
+  }
+  if (spec.kind === "nuxeo") {
+    const host = (f.url ?? "").replace(/^https?:\/\//i, "").replace(/\/+$/, "");
+    const root = f.root || "/";
+    const username = f.username ? ` (${f.username})` : "";
+    return { icon, label: host ? `${host}:${root}${username}` : root };
   }
   // Generic fallback so a new backend renders a sensible chip without editing this.
   return { icon, label: f.root || f.bucket || f.host || spec.kind };

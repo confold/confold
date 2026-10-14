@@ -171,10 +171,21 @@ export interface FieldSpec {
 export interface SourceTypeInfo {
   id: string;
   name: string;
-  /** Icon for the picker (emoji today) — sourced from the backend so new kinds need no frontend switch. */
+  /** Icon token sourced from the backend; known brand tokens render their local image mark. */
   icon: string;
   capabilities: Capabilities;
   fields: FieldSpec[];
+}
+
+export interface NuxeoRoute {
+  name: string;
+  title: string;
+  path: string;
+}
+
+export interface NuxeoRoutePage {
+  entries: NuxeoRoute[];
+  has_more: boolean;
 }
 
 /** A single file on a source: the source + the relative path within it (the unit the file commands take). */

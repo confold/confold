@@ -507,7 +507,7 @@ impl FieldSpec {
 pub(crate) struct SourceTypeInfo {
     pub(crate) id: &'static str,
     pub(crate) name: &'static str,
-    /// Icon for the picker (emoji today) — sourced from the `SourceKind`, so the frontend needn't switch.
+    /// Icon token for the picker, sourced from `SourceKind` for generic rendering.
     pub(crate) icon: &'static str,
     /// What the type can do — gates which actions the UI offers. See `confold_vfs::Capabilities`.
     pub(crate) capabilities: Capabilities,

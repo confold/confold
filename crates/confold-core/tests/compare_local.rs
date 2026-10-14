@@ -405,3 +405,33 @@ fn full_compare_agrees_with_native_cmp() {
         assert_eq!(ours_equal, cmp_equal, "case {i}: engine vs cmp disagree");
     }
 }
+
+/// Drilling (lazy `list_level`) into a directory that exists only on one side must list the
+/// existing side's children as one-sided — not fail because the other side has no such directory
+/// (e.g. a Nuxeo→local compare where nothing has been migrated yet).
+#[test]
+fn list_level_enters_a_one_sided_directory() {
+    let l = tempfile::tempdir().unwrap();
+    let r = tempfile::tempdir().unwrap();
+    write(l.path(), "solo/inner.txt", b"x");
+
+    let start = RelPath::root().child("solo");
+    let cfg = CompareConfig {
+        method: CompareMethod::Quick {
+            large_file_threshold: 1024,
+        },
+        recursive: false,
+        filters: FilterSet::default(),
+    };
+    let report = list_level(
+        &LocalSource::new(l.path()),
+        &LocalSource::new(r.path()),
+        &start,
+        &cfg,
+    )
+    .unwrap();
+
+    assert_eq!(report.root.children.len(), 1);
+    assert_eq!(report.root.children[0].name, "inner.txt");
+    assert_eq!(report.root.children[0].status, DiffStatus::LeftOnly);
+}

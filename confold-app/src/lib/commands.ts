@@ -20,6 +20,7 @@ import type {
   SaveResult,
   HexCompare,
   SourceTypeInfo,
+  NuxeoRoutePage,
 } from "$lib/types";
 import type { MigrateAction } from "$lib/migrate";
 
@@ -172,9 +173,10 @@ export const commands = {
   planActions: (left: SourceSpec, right: SourceSpec, actions: SyncAction[]) =>
     invoke<ActionOutcome[]>("plan_actions", { left, right, actions }),
 
-  /** Apply a batch of manual sync actions. */
-  applyActions: (left: SourceSpec, right: SourceSpec, actions: SyncAction[]) =>
-    invoke<ActionOutcome[]>("apply_actions", { left, right, actions }),
+  /** Execute a batch of manual copy/delete actions on a background thread. Progress streams via
+   *  `migrate-progress`; completion via `migrate-done` (tagged with `generation`). */
+  applyActions: (left: SourceSpec, right: SourceSpec, actions: SyncAction[], generation: number) =>
+    invoke<void>("apply_actions", { left, right, actions, generation }),
 
   /** Diff a single file pair (text/binary/too-large). */
   diffFile: (left: FileRef, right: FileRef) => invoke<DiffFileResult>("diff_file", { left, right }),
@@ -204,6 +206,14 @@ export const commands = {
 
   /** Probe a source config: reachable? directory or single file? */
   testSource: (spec: SourceSpec) => invoke<TestResult>("test_source", { spec }),
+
+  /** Browse one page of immediate Nuxeo folders under `path`. */
+  nuxeoBrowseRoutes: (spec: SourceSpec, path: string, pageIndex: number) =>
+    invoke<NuxeoRoutePage>("nuxeo_browse_routes", { spec, path, pageIndex }),
+
+  /** Search Nuxeo folder titles or absolute path prefixes globally; results are paginated. */
+  nuxeoSearchRoutes: (spec: SourceSpec, query: string, pageIndex: number) =>
+    invoke<NuxeoRoutePage>("nuxeo_search_routes", { spec, query, pageIndex }),
 
   installShellIntegration: () => invoke<void>("install_shell_integration"),
   uninstallShellIntegration: () => invoke<void>("uninstall_shell_integration"),

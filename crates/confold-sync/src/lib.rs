@@ -4,8 +4,11 @@
 //! [`confold_vfs::SourceMut`], so they work for any backend (local now; SMB/S3 later). A directory copy is
 //! expanded recursively into per-file operations; the returned [`ActionOutcome`]s report each concrete
 //! operation. With `dry_run = true`, nothing is written — the same outcome list is produced as a preview.
+//!
+//! [`apply_mixed`] accepts read-only sides: only the side(s) an operation writes to need to be
+//! mutable, so a read-only origin (e.g. Nuxeo) can be the copy source.
 
-use confold_vfs::{RelPath, SourceError, SourceMut};
+use confold_vfs::{RelPath, Source, SourceError, SourceMut};
 use serde::{Deserialize, Serialize};
 
 /// A synchronization operation requested on one compared item.
@@ -56,40 +59,105 @@ pub fn apply(
     actions: &[SyncAction],
     dry_run: bool,
 ) -> Vec<ActionOutcome> {
+    apply_mixed(left, right, Some(left), Some(right), actions, dry_run)
+}
+
+/// Like [`apply`], but each side only needs to be mutable when an operation actually writes to it —
+/// a read-only side can still be the *source* of a copy. `None` where an operation would write
+/// yields a per-operation `read-only` failure instead of running the batch.
+pub fn apply_mixed(
+    left: &dyn Source,
+    right: &dyn Source,
+    left_mut: Option<&dyn SourceMut>,
+    right_mut: Option<&dyn SourceMut>,
+    actions: &[SyncAction],
+    dry_run: bool,
+) -> Vec<ActionOutcome> {
     // Drop actions already covered by an ancestor directory action of the same op (a recursive copy or
     // delete of a dir handles its descendants) — avoids redundant copies and "not found" on deletes.
     let effective = dedup_covered(actions);
     let mut out = Vec::new();
     for action in &effective {
         match action.op {
-            SyncOp::CopyLeftToRight => copy(
-                left,
-                right,
-                &action.rel_path,
-                action.is_dir,
-                action.op,
-                dry_run,
-                &mut out,
-            ),
-            SyncOp::CopyRightToLeft => copy(
-                right,
-                left,
-                &action.rel_path,
-                action.is_dir,
-                action.op,
-                dry_run,
-                &mut out,
-            ),
-            SyncOp::DeleteLeft => delete(left, &action.rel_path, action.op, dry_run, &mut out),
-            SyncOp::DeleteRight => delete(right, &action.rel_path, action.op, dry_run, &mut out),
+            SyncOp::CopyLeftToRight => match target(right_mut, dry_run) {
+                Target::Ready(to) => copy(
+                    left,
+                    to,
+                    &action.rel_path,
+                    action.is_dir,
+                    action.op,
+                    dry_run,
+                    &mut out,
+                ),
+                Target::PreviewOnly => push_ok(&mut out, &action.rel_path, action.op),
+                Target::ReadOnly => out.push(read_only_outcome(&action.rel_path, action.op)),
+            },
+            SyncOp::CopyRightToLeft => match target(left_mut, dry_run) {
+                Target::Ready(to) => copy(
+                    right,
+                    to,
+                    &action.rel_path,
+                    action.is_dir,
+                    action.op,
+                    dry_run,
+                    &mut out,
+                ),
+                Target::PreviewOnly => push_ok(&mut out, &action.rel_path, action.op),
+                Target::ReadOnly => out.push(read_only_outcome(&action.rel_path, action.op)),
+            },
+            SyncOp::DeleteLeft => match target(left_mut, dry_run) {
+                Target::Ready(m) => delete(m, &action.rel_path, action.op, dry_run, &mut out),
+                Target::PreviewOnly => push_ok(&mut out, &action.rel_path, action.op),
+                Target::ReadOnly => out.push(read_only_outcome(&action.rel_path, action.op)),
+            },
+            SyncOp::DeleteRight => match target(right_mut, dry_run) {
+                Target::Ready(m) => delete(m, &action.rel_path, action.op, dry_run, &mut out),
+                Target::PreviewOnly => push_ok(&mut out, &action.rel_path, action.op),
+                Target::ReadOnly => out.push(read_only_outcome(&action.rel_path, action.op)),
+            },
         }
     }
     out
 }
 
+/// What an operation can do against one side: write through the mutable handle, preview without
+/// touching anything (dry run with no handle), or fail as read-only.
+enum Target<'a> {
+    Ready(&'a dyn SourceMut),
+    PreviewOnly,
+    ReadOnly,
+}
+
+fn target<'a>(m: Option<&'a dyn SourceMut>, dry_run: bool) -> Target<'a> {
+    match m {
+        Some(m) => Target::Ready(m),
+        None if dry_run => Target::PreviewOnly,
+        None => Target::ReadOnly,
+    }
+}
+
+fn read_only_outcome(rel: &RelPath, op: SyncOp) -> ActionOutcome {
+    ActionOutcome {
+        rel_path: rel.clone(),
+        op,
+        ok: false,
+        error: Some("this source is read-only".to_owned()),
+    }
+}
+
+fn push_ok(out: &mut Vec<ActionOutcome>, rel: &RelPath, op: SyncOp) {
+    out.push(ActionOutcome {
+        rel_path: rel.clone(),
+        op,
+        ok: true,
+        error: None,
+    });
+}
+
 /// Recursively copy `rel` from `from` to `to`. Directories expand into per-file operations.
+/// The origin only needs read access — a read-only backend is a valid copy source.
 fn copy(
-    from: &dyn SourceMut,
+    from: &dyn Source,
     to: &dyn SourceMut,
     rel: &RelPath,
     is_dir: bool,

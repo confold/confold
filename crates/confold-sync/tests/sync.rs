@@ -4,7 +4,7 @@ use std::fs;
 use std::path::Path;
 
 use confold_core::{compare, CompareConfig};
-use confold_sync::{apply, SyncAction, SyncOp};
+use confold_sync::{apply, apply_mixed, SyncAction, SyncOp};
 use confold_vfs::{LocalSource, RelPath};
 
 fn write(dir: &Path, rel: &str, bytes: &[u8]) {
@@ -182,4 +182,103 @@ fn overlapping_dir_and_child_delete_succeeds() {
     let failed: Vec<_> = outcomes.iter().filter(|o| !o.ok).collect();
     assert!(failed.is_empty(), "no op should fail: {failed:?}");
     assert!(!r.path().join("d").exists(), "directory removed");
+}
+
+// ── Read-only origins (e.g. Nuxeo): a side only needs SourceMut when an op writes to it ─────────
+
+/// Delegating wrapper that is a `Source` but deliberately NOT `SourceMut` — the type-level shape of
+/// a read-only backend.
+struct ReadOnly<'a>(&'a LocalSource);
+
+impl confold_vfs::Source for ReadOnly<'_> {
+    fn capabilities(&self) -> confold_vfs::Capabilities {
+        confold_vfs::Capabilities {
+            list: true,
+            read: true,
+            fingerprint: false,
+            write: false,
+        }
+    }
+    fn read_dir(
+        &self,
+        rel: &RelPath,
+    ) -> Result<Vec<confold_vfs::EntryMeta>, confold_vfs::SourceError> {
+        self.0.read_dir(rel)
+    }
+    fn open(
+        &self,
+        rel: &RelPath,
+    ) -> Result<Box<dyn confold_vfs::ContentReader>, confold_vfs::SourceError> {
+        self.0.open(rel)
+    }
+}
+
+#[test]
+fn read_only_origin_can_be_copied_from_but_not_written_to() {
+    let l = tempfile::tempdir().unwrap();
+    let r = tempfile::tempdir().unwrap();
+    write(l.path(), "doc.txt", b"alpha");
+
+    let left = ReadOnly(&LocalSource::new(l.path()));
+    let right = LocalSource::new(r.path());
+    let actions = vec![SyncAction {
+        rel_path: rel(&["doc.txt"]),
+        op: SyncOp::CopyLeftToRight,
+        is_dir: false,
+    }];
+
+    // Copy FROM the read-only side works: only the destination must be mutable.
+    let outcomes = apply_mixed(&left, &right, None, Some(&right), &actions, false);
+    assert!(outcomes.iter().all(|o| o.ok), "copy out: {outcomes:?}");
+    assert_eq!(fs::read(r.path().join("doc.txt")).unwrap(), b"alpha");
+
+    // The reverse copy (writes the read-only side) fails per-op, not per-batch.
+    let back = vec![SyncAction {
+        rel_path: rel(&["doc.txt"]),
+        op: SyncOp::CopyRightToLeft,
+        is_dir: false,
+    }];
+    let outcomes = apply_mixed(&left, &right, None, Some(&right), &back, false);
+    assert_eq!(outcomes.len(), 1);
+    assert!(!outcomes[0].ok);
+    assert!(outcomes[0].error.as_deref().unwrap().contains("read-only"));
+
+    // So does deleting on the read-only side.
+    let del = vec![SyncAction {
+        rel_path: rel(&["doc.txt"]),
+        op: SyncOp::DeleteLeft,
+        is_dir: false,
+    }];
+    let outcomes = apply_mixed(&left, &right, None, Some(&right), &del, false);
+    assert!(!outcomes[0].ok);
+    assert!(
+        fs::exists(l.path().join("doc.txt")).unwrap(),
+        "origin untouched"
+    );
+}
+
+#[test]
+fn dry_run_previews_without_any_mutable_handle() {
+    let l = tempfile::tempdir().unwrap();
+    let r = tempfile::tempdir().unwrap();
+    write(l.path(), "doc.txt", b"alpha");
+
+    let left = ReadOnly(&LocalSource::new(l.path()));
+    let right = LocalSource::new(r.path());
+    let actions = vec![
+        SyncAction {
+            rel_path: rel(&["doc.txt"]),
+            op: SyncOp::CopyLeftToRight,
+            is_dir: false,
+        },
+        SyncAction {
+            rel_path: rel(&["other.txt"]),
+            op: SyncOp::DeleteRight,
+            is_dir: false,
+        },
+    ];
+    let outcomes = apply_mixed(&left, &right, None, None, &actions, true);
+    assert!(outcomes.iter().all(|o| o.ok), "preview: {outcomes:?}");
+    assert!(!r.path().join("doc.txt").exists(), "dry run wrote nothing");
+    assert!(fs::exists(l.path().join("doc.txt")).unwrap());
 }

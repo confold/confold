@@ -51,6 +51,19 @@ const pendingDir = (over: Partial<DiffEntry> = {}): DiffEntry => ({
   ...over,
 });
 
+
+const oneSidedDir = (over: Partial<DiffEntry> = {}): DiffEntry => ({
+  rel_path: ["solo"],
+  name: "solo",
+  is_dir: true,
+  status: "left_only",
+  left: meta({ name: "solo", rel_path: ["solo"], kind: "dir" }),
+  right: null,
+  detail: null,
+  children: [],
+  ...over,
+});
+
 describe("DiffNode rendering", () => {
   it("renders a file name as-is and a directory name with a trailing slash", () => {
     const { container } = render(DiffNode, { entry: fileEntry() });
@@ -177,5 +190,28 @@ describe("DiffNode interaction", () => {
 
     await fireEvent.click(screen.getByLabelText("select f.txt"));
     expect(selection.has(keyOf(entry))).toBe(true);
+  });
+});
+
+describe("one-sided directories", () => {
+  it("offer a lazy expand toggle and load their contents on first open", async () => {
+    const onexpand = vi.fn();
+    const { container } = render(DiffNode, { entry: oneSidedDir(), onexpand });
+    const toggle = screen.getByLabelText("toggle");
+    expect(toggle.textContent).toBe("▶");
+    await fireEvent.click(toggle);
+    await tick();
+    expect(onexpand).toHaveBeenCalledTimes(1);
+    expect(onexpand).toHaveBeenCalledWith(expect.objectContaining({ name: "solo" }));
+    expect(container.querySelector(".node")?.classList.contains("status-left_only")).toBe(true);
+  });
+
+  it("do not re-request contents when toggled again after loading", async () => {
+    const onexpand = vi.fn();
+    const entry = oneSidedDir({ children: [fileEntry({ name: "inner.txt", rel_path: ["solo", "inner.txt"] })] });
+    const { container } = render(DiffNode, { entry, onexpand });
+    await fireEvent.click(container.querySelector(".toggle")!);
+    await tick();
+    expect(onexpand).not.toHaveBeenCalled();
   });
 });

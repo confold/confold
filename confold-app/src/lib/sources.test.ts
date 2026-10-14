@@ -173,6 +173,21 @@ describe("slugOf", () => {
     ).toBe("127.0.0.1:9000/data/bulk");
   });
 
+  it("uses the Nuxeo logo token in source identities", () => {
+    expect(slugOf({
+      kind: "nuxeo",
+      fields: {
+        url: "https://nuxeo.example/nuxeo/",
+        username: "reader",
+        password: "not-shown",
+        root: "/default-domain/workspaces",
+      },
+    })).toEqual({
+      icon: "nuxeo",
+      label: "nuxeo.example/nuxeo:/default-domain/workspaces (reader)",
+    });
+  });
+
   it("falls back generically for an unknown kind (renders without per-type code)", () => {
     expect(slugOf({ kind: "webdav", fields: { host: "h" } })).toEqual({ icon: "📦", label: "h" });
   });

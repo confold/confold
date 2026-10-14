@@ -6,6 +6,7 @@
   // trusted. At least one side must be trusted to preview.
   import type { CompareOpts, SourceSpec } from "$lib/types";
   import { slugOf } from "$lib/sources";
+  import SourceIcon from "./SourceIcon.svelte";
 
   type ConflictRule = "newer" | "larger" | "manual";
   type Flags = {
@@ -57,9 +58,9 @@
     <h2>Sync</h2>
 
     <p class="mig-dir">
-      {#if originSpec}<span class="ico">{slugOf(originSpec).icon}</span> {slugOf(originSpec).label}{/if}
+      {#if originSpec}<SourceIcon icon={slugOf(originSpec).icon} size="compact" /> {slugOf(originSpec).label}{/if}
       <span class="arrow">⇄</span>
-      {#if destSpec}<span class="ico">{slugOf(destSpec).icon}</span> {slugOf(destSpec).label}{/if}
+      {#if destSpec}<SourceIcon icon={slugOf(destSpec).icon} size="compact" /> {slugOf(destSpec).label}{/if}
     </p>
 
     <label class="mig-row">Comparison method

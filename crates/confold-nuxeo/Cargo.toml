@@ -1,0 +1,33 @@
+# Standalone (excluded from the engine workspace, like confold-s3) so the shared lockfile stays free
+# of reqwest's HTTP dependency tree and the wiremock dev-server's transitive pins. The app depends on
+# this crate by path alongside the other backends, which is unaffected by the workspace split.
+[package]
+name = "confold-nuxeo"
+version = "0.6.1"
+edition = "2021"
+license = "Apache-2.0"
+rust-version = "1.96"
+
+[dependencies]
+confold-vfs = { path = "../confold-vfs" }
+# HTTP/REST client (rustls — no native deps), matching the pure-Rust posture of `russh`/`object_store`.
+# `stream` powers the Range-ignored fallback: the whole body is streamed to a temp file once.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "charset", "http2", "stream"] }
+# The async reqwest API is driven to completion on an owned runtime behind the synchronous `Source`
+# trait (same pattern as `confold-sftp`/`confold-s3`).
+tokio = { version = "1", features = ["rt-multi-thread"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Stream trait for the Range-ignored fallback download (no default features — traits only).
+futures-util = { version = "0.3", default-features = false }
+time = { version = "0.3", features = ["parsing"] }
+# Range-ignored (200) blob fallback: one temp file per reader, dropped with it.
+tempfile = "3"
+
+[dev-dependencies]
+# In-process HTTP mock server for hermetic integration tests against the documented REST shapes
+# (no Nuxeo instance needed; manual acceptance against a real server remains a separate step).
+wiremock = "0.6"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+confold-core = { path = "../confold-core" }
+tempfile = "3"

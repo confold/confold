@@ -19,6 +19,8 @@ use confold_core::{
     FilterSet, LocalSource, RelPath, Source, SourceError, SourceMut, DEFAULT_LARGE_FILE_THRESHOLD,
 };
 #[allow(unused_imports)]
+use confold_nuxeo::{NuxeoConfig, NuxeoRoutePage, NuxeoSource};
+#[allow(unused_imports)]
 use confold_s3::{S3Config, S3Source};
 #[allow(unused_imports)]
 use confold_sftp::{SftpAuth, SftpConfig, SftpSource};
@@ -90,7 +92,7 @@ pub(crate) trait SourceKind: Send + Sync {
     fn id(&self) -> &'static str;
     /// Human-readable name for the picker.
     fn name(&self) -> &'static str;
-    /// Icon (emoji today) for the picker — replaces the frontend's per-type switch.
+    /// Icon token for the picker — known brand tokens can render a local image mark.
     fn icon(&self) -> &'static str;
     /// What this backend can do — gates the actions the UI offers.
     fn capabilities(&self) -> Capabilities;
@@ -298,9 +300,101 @@ pub(crate) fn sftp_auth_from_fields(f: &FieldValues) -> Result<SftpAuth, String>
     }
 }
 
+/// Nuxeo document-management source (read-only — a migration origin).
+pub(crate) struct NuxeoKind;
+impl NuxeoKind {
+    fn connect(&self, f: &FieldValues, root: Option<String>) -> Result<NuxeoSource, String> {
+        NuxeoSource::connect(NuxeoConfig {
+            base_url: required_field(f, "url")?,
+            username: required_field(f, "username")?,
+            password: required_field(f, "password")?,
+            root: root
+                .unwrap_or_else(|| optional_field(f, "root").unwrap_or_else(|| "/".to_owned())),
+        })
+        .map_err(|e| e.to_string())
+    }
+}
+impl SourceKind for NuxeoKind {
+    fn id(&self) -> &'static str {
+        "nuxeo"
+    }
+    fn name(&self) -> &'static str {
+        "Nuxeo"
+    }
+    fn icon(&self) -> &'static str {
+        "nuxeo"
+    }
+    fn capabilities(&self) -> Capabilities {
+        // List + read + fingerprint (blob digests); no write — the write target of the owner's
+        // migration is Paperless-ngx (a later backend), never Nuxeo itself.
+        Capabilities {
+            list: true,
+            read: true,
+            fingerprint: true,
+            write: false,
+        }
+    }
+    fn fields(&self) -> Vec<FieldSpec> {
+        vec![
+            FieldSpec::new(
+                "url",
+                "Server URL (incl. /nuxeo context path)",
+                "text",
+                true,
+            ),
+            FieldSpec::new("username", "Username", "text", true),
+            FieldSpec::new("password", "Password", "password", true).secret(),
+            FieldSpec::new("root", "Document path", "path", false).default("/"),
+        ]
+    }
+    fn cache_key(&self, f: &FieldValues) -> String {
+        let g = |k: &str| f.get(k).map(String::as_str).unwrap_or("");
+        // Secret-free identity (no password): user @ url / root.
+        format!("nuxeo:{}@{}/{}", g("username"), g("url"), g("root"))
+    }
+    fn build_source(&self, f: &FieldValues) -> Result<Box<dyn Source>, String> {
+        Ok(Box::new(self.connect(f, None)?))
+    }
+}
+
+fn nuxeo_picker_source(spec: &SourceSpec, root: Option<String>) -> Result<NuxeoSource, String> {
+    if spec.kind != "nuxeo" {
+        return Err("route browsing is only supported for Nuxeo sources".to_owned());
+    }
+    NuxeoKind.connect(&spec.fields, root)
+}
+
+#[tauri::command]
+pub(crate) fn nuxeo_browse_routes(
+    spec: SourceSpec,
+    path: String,
+    page_index: u64,
+) -> Result<NuxeoRoutePage, String> {
+    nuxeo_picker_source(&spec, Some(path))?
+        .browse_directories_page(page_index)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub(crate) fn nuxeo_search_routes(
+    spec: SourceSpec,
+    query: String,
+    page_index: u64,
+) -> Result<NuxeoRoutePage, String> {
+    nuxeo_picker_source(&spec, None)?
+        .search_directories_page(&query, page_index)
+        .map_err(|e| e.to_string())
+}
+
 /// The registered source types. Adding a backend = add its `SourceKind` here.
-pub(crate) static REGISTRY: LazyLock<Vec<Box<dyn SourceKind>>> =
-    LazyLock::new(|| vec![Box::new(FsKind), Box::new(SftpKind), Box::new(S3Kind)]);
+pub(crate) static REGISTRY: LazyLock<Vec<Box<dyn SourceKind>>> = LazyLock::new(|| {
+    vec![
+        Box::new(FsKind),
+        Box::new(SftpKind),
+        Box::new(S3Kind),
+        Box::new(NuxeoKind),
+    ]
+});
 
 /// Look up a registered source kind by id.
 pub(crate) fn kind_for(id: &str) -> Result<&'static dyn SourceKind, String> {
