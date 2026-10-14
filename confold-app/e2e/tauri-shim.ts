@@ -249,6 +249,19 @@ const responses: Record<string, (args?: Record<string, unknown>) => unknown> = {
   }),
   compare: () => REPORT,
   compare_level: () => REPORT,
+  // Manual-action plumbing: plan returns one ok outcome per action; apply records the batch so
+  // specs can assert exactly what the backend would have received.
+  plan_actions: (args) => {
+    const actions = (args?.actions as { rel_path: string[]; op: string }[]) ?? [];
+    return actions.map((a) => ({ rel_path: a.rel_path, op: a.op, ok: true, error: null }));
+  },
+  apply_actions: (args) => {
+    const g = globalThis as { __confoldApplied?: unknown[][] };
+    g.__confoldApplied = (g.__confoldApplied ?? []).concat(
+      [(args?.actions as unknown[]) ?? []],
+    );
+    return undefined;
+  },
   diff_file: (args) => {
     const rel = String((args?.left as { rel?: string })?.rel ?? "");
     if (rel.endsWith("pending.dat")) return new Promise(() => {});

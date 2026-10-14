@@ -13,7 +13,8 @@
   } from "$lib/migrate";
   import { isMetadataMethod, metadataVerdict, matchesGlob, excludeRemovalNeedsRefetch } from "$lib/recompute";
   import { slugOf, sourcesEqual, stripSecrets, missingRequired } from "$lib/sources";
-  import { selection, clearSelection, toggle } from "$lib/selection.svelte";
+  import { identicalStats, expandSkippingIdentical } from "$lib/manual-actions";
+  import { selection, clearSelection, toggle, keyOf } from "$lib/selection.svelte";
   import { hidden, toggleStatus, nodeVisible } from "$lib/filter.svelte";
   import { sortState, sortEntries } from "$lib/sort.svelte";
   import { isOpen, toggleOpen, clearExpanded, expanded } from "$lib/expand.svelte";
@@ -129,8 +130,13 @@
   // truth — `report` is $state, so deep mutations are reactive). `loaded` marks dirs whose level has
   // been fetched (so we don't refetch, and empty dirs aren't mistaken for unloaded); `pendingLoads`
   // marks in-flight compare_level requests so the row shows a spinner. Both are reactive sets.
+  // INVARIANT: a folder's raw `status` stays "skipped/not descended" even after its level loads —
+  // its real state is DERIVED (resolveDir / `loaded`), never stored. Anything that needs to know
+  // whether a folder's subtree is comparable must ask `loaded`, not the raw status.
   const pendingLoads = new SvelteSet<string>();
   const loaded = new SvelteSet<string>();
+  /** The single source of truth for "this folder's children are in the tree" (manual-action guard). */
+  const dirIsLoaded = (e: DiffEntry) => loaded.has(e.rel_path.join("/"));
 
   // Streaming verdicts: each scan returns its level's listing immediately (files as "comparing"
   // placeholders) and resolves file verdicts in the background, pushing `entry-resolved` events. We
@@ -216,7 +222,16 @@
   let plan = $state<ActionOutcome[] | null>(null);
   let pendingActions = $state<SyncAction[] | null>(null);
   let pendingLabel = $state("");
-  let applying = $state(false);
+  // The compare-view copy guard: how many identical files the batch would re-write (counted over the
+  // compared parts of the selection — pending folders have no data and stay recursive), plus the
+  // user's skip choice for them.
+  let pendingOp = $state<SyncOp>("copy_left_to_right");
+  let pendingEntries = $state<DiffEntry[]>([]);
+  let pendingIdentical = $state<{ count: number; hasUnknown: boolean }>({
+    count: 0,
+    hasUnknown: false,
+  });
+  let skipIdentical = $state(false);
   let resultMsg = $state("");
   let msgTimer: ReturnType<typeof setTimeout> | undefined;
   let shellMsg = $state("");
@@ -1105,20 +1120,37 @@
 
   async function startAction(op: SyncOp, label: string) {
     if (!originSpec || !destSpec) return;
-    const actions: SyncAction[] = [...selection.values()].map((e) => ({
-      rel_path: e.rel_path,
-      op,
-      is_dir: e.is_dir,
-    }));
-    if (actions.length === 0) return;
+    const entries = [...selection.values()];
+    if (entries.length === 0) return;
+    pendingOp = op;
+    pendingEntries = entries;
+    // Known-comparison guard: a copy that would rewrite already-identical files asks first
+    // (skip is the default). Without comparison coverage we copy directly, per the manual
+    // action's meaning — no waiting, no guessing.
+    pendingIdentical = identicalStats(op, entries, dirIsLoaded);
+    skipIdentical = pendingIdentical.count > 0;
     pendingLabel = label;
+    await rebuildActionPlan();
+  }
+
+  async function rebuildActionPlan() {
+    if (!originSpec || !destSpec) return;
+    const actions = skipIdentical
+      ? expandSkippingIdentical(pendingOp, pendingEntries, dirIsLoaded)
+      : pendingEntries.map((e) => ({ rel_path: e.rel_path, op: pendingOp, is_dir: e.is_dir }));
     pendingActions = actions;
+    plan = null;
     try {
       plan = await commands.planActions(originSpec, destSpec, actions);
     } catch (e) {
       error = String(e);
       pendingActions = null;
     }
+  }
+
+  function setSkipIdentical(v: boolean) {
+    skipIdentical = v;
+    rebuildActionPlan();
   }
 
   function cancelAction() {
@@ -1879,7 +1911,25 @@
     <div class="overlay">
       <div class="modal">
         <h2>{pendingLabel}</h2>
-        <p>{plan.length} operation{plan.length === 1 ? "" : "s"} will run:</p>
+        {#if pendingActions && pendingActions.length === 0}
+          <p>Nothing to do — every selected file already exists identically on the other side.</p>
+        {:else}
+          <p>{plan!.length} operation{plan!.length === 1 ? "" : "s"} will run:</p>
+        {/if}
+        {#if pendingIdentical.count > 0}
+          <label class="identical-guard" class:wary={!skipIdentical}>
+            <input
+              type="checkbox"
+              checked={skipIdentical}
+              onchange={(e) => setSkipIdentical(e.currentTarget.checked)}
+            />
+            {#if skipIdentical}
+              Skip the {pendingIdentical.count} file{pendingIdentical.count === 1 ? "" : "s"} already identical (won't be re-copied){pendingIdentical.hasUnknown ? " — folders not yet compared copy whole" : ""}
+            {:else}
+              ⚠ {pendingIdentical.count} file{pendingIdentical.count === 1 ? "" : "s"} are already identical and will be re-copied
+            {/if}
+          </label>
+        {/if}
         <ul class="planlist">
           {#each plan.slice(0, 200) as o (k(o.rel_path) + o.op)}
             <li>{k(o.rel_path)}</li>
@@ -1887,8 +1937,8 @@
           {#if plan.length > 200}<li>… and {plan.length - 200} more</li>{/if}
         </ul>
         <div class="modal-actions">
-          <button class="ghost" onclick={cancelAction} disabled={applying}>Cancel</button>
-          <button class="danger" onclick={confirmApply} disabled={applying}>{applying ? "Applying…" : "Confirm"}</button>
+          <button class="ghost" onclick={cancelAction}>Cancel</button>
+          <button class="danger" disabled={!pendingActions || pendingActions.length === 0} onclick={confirmApply}>Confirm</button>
         </div>
       </div>
     </div>
@@ -2741,6 +2791,21 @@
     font-size: 0.8rem;
     margin: 0.5rem 0;
   }
+  .identical-guard {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+    padding: 0.4rem 0.6rem;
+    border-radius: 8px;
+    background: rgba(46, 160, 67, 0.08);
+    border: 1px solid rgba(46, 160, 67, 0.4);
+  }
+  .identical-guard.wary {
+    background: rgba(232, 163, 61, 0.1);
+    border-color: rgba(232, 163, 61, 0.55);
+    color: #9a6a13;
+  }
   .modal-actions {
     display: flex;
     justify-content: flex-end;
@@ -2787,6 +2852,9 @@
     }
     .planlist {
       background: #1e1e1e;
+    }
+    .identical-guard.wary {
+      color: #e8a33d;
     }
   }
 </style>
