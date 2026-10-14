@@ -115,6 +115,7 @@ pub fn run() {
             semantic_apply_new,
         ])
         .setup(|app| {
+            apply::prune_apply_logs(&shell::cache_dir(), std::time::SystemTime::now());
             // The configured default size can exceed a small monitor; keep the window within the
             // work area (dock/taskbar excluded) so launch never clips or goes off-screen.
             if let Some(window) = app.get_webview_window("main") {

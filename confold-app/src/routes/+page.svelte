@@ -92,7 +92,12 @@
   // Progress state (M1.5)
   let migrateProgressOpen = $state(false);
   let migrateApplying = $state(false);
+  /** Reference total for the progress modal's "applied / ≈N" ratio — set by whichever flow opens it
+   *  (migrate: the plan's checked item count; manual actions: the selected action count). */
+  let progressTotal = $state(0);
   let migrateGeneration = $state(0);
+  /** What the shared progress modal calls the current run: a compare-view copy, a Migrate, or a Sync. */
+  let applyNoun = $state<"Copy" | "Migration" | "Sync">("Migration");
   let migrateOutcomes = $state<MigrateOutcome[]>([]);
   // Apply-progress batching (see `queueOutcome`): coalesce the per-file `migrate-progress` storm so the
   // outcome list + its derived counts re-render ~once/frame instead of once/event (same fix as compare
@@ -614,14 +619,16 @@
     migrateOutcomes = migrateOutcomes.concat(pendingOutcomes);
     pendingOutcomes = [];
   }
-  // Buffer a streamed apply outcome and schedule a per-frame flush (rAF; setTimeout fallback for tests /
-  // backgrounded tabs). Mirrors `queueVerdict` — avoids the O(N²) of rebuilding the list per event.
+  // Buffer a streamed apply outcome and schedule a per-frame flush (rAF with a setTimeout backstop —
+  // an occluded/backgrounded window throttles rAF to zero, which would hold every outcome until the
+  // run finished; the timer guarantees the list still ticks). Mirrors `queueVerdict` — avoids the
+  // O(N²) of rebuilding the list per event.
   function queueOutcome(o: MigrateOutcome) {
     pendingOutcomes.push(o);
     if (outcomeFlushScheduled) return;
     outcomeFlushScheduled = true;
     if (typeof requestAnimationFrame === "function") requestAnimationFrame(flushOutcomes);
-    else setTimeout(flushOutcomes, 50);
+    setTimeout(flushOutcomes, 60);
   }
 
   // Apply the migration plan. `migrate_apply` returns immediately after spawning the background
@@ -637,6 +644,7 @@
     migrateDoneSummary = null;
     migrateMoveSummary = null;
     migratePhase = "";
+    progressTotal = planCheckedTotal;
     migrateApplying = true;
     migratePlanOpen = false;
     migrateProgressOpen = true;
@@ -652,6 +660,7 @@
       activeFlow === "migrate" &&
       migrateFlags.delete_origin &&
       uncheckedCount(migrateActions, migrateChecked) === 0;
+    applyNoun = activeFlow === "sync" ? "Sync" : "Migration";
     try {
       await commands.migrateApply({
         left: originSpec,
@@ -1119,18 +1128,35 @@
 
   async function confirmApply() {
     if (!pendingActions || !originSpec || !destSpec) return;
-    applying = true;
+    // Same background machinery as a migrate apply: progress streams via `migrate-progress` into the
+    // shared progress modal; `migrate-done` flips the modal to its summary. The subsequent
+    // Continue refreshes the comparison.
+    const generation = migrateGeneration + 1;
+    migrateGeneration = generation;
+    migrateOutcomes = [];
+    pendingOutcomes = [];
+    migrateDoneSummary = null;
+    migrateMoveSummary = null;
+    migratePhase = "";
+    // No "≈N" ratio for manual actions: top-level actions expand into many file outcomes, so the
+    // action count is a meaningless reference (it read "252 / ≈6 applied" on real copies).
+    progressTotal = 0;
+    migrateApplying = true;
+    migrateProgressOpen = true;
+    applyNoun = "Copy";
+    plan = null;
+    const actions = pendingActions;
+    const label = pendingLabel;
+    pendingActions = null;
     try {
-      const outcomes = await commands.applyActions(originSpec, destSpec, pendingActions);
-      const failed = outcomes.filter((o) => !o.ok).length;
-      resultMsg = `${pendingLabel}: ${outcomes.length - failed} ok, ${failed} failed.`;
+      await commands.applyActions(originSpec, destSpec, actions, generation);
+      // Returns immediately; migrateDoneSummary / migrateApplying are set by the migrate-done listener.
     } catch (e) {
-      error = String(e);
-    } finally {
-      applying = false;
-      plan = null;
-      pendingActions = null;
-      await runCompare(); // refresh to reflect the new state
+      // The apply never started (bad args / connection error) — surface the real error and don't
+      // leave a misleading progress window open.
+      error = `${label} failed to start: ${e}`;
+      migrateApplying = false;
+      migrateProgressOpen = false;
     }
   }
 
@@ -1893,7 +1919,8 @@
       phase={migratePhase}
       {originSpec}
       {destSpec}
-      checkedTotal={planCheckedTotal}
+      checkedTotal={progressTotal}
+      noun={applyNoun}
       oncancel={cancelMigrate}
       oncontinue={continueMigrate}
     />

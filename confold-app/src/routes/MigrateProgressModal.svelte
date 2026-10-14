@@ -3,6 +3,7 @@
   // (C1-full). Pure display + two callbacks; the per-category counters are derived here from `outcomes`
   // via the shared pure helpers, so the parent only passes raw state.
   import { slugOf } from "$lib/sources";
+  import SourceIcon from "./SourceIcon.svelte";
   import type { SourceSpec } from "$lib/types";
   import {
     appliedByReason,
@@ -22,6 +23,8 @@
     originSpec,
     destSpec,
     checkedTotal,
+    /** What the run is called in headings — the shared modal also serves compare-view copies and Sync. */
+    noun = "Migration",
     oncancel,
     oncontinue,
   }: {
@@ -39,9 +42,12 @@
     destSpec: SourceSpec | null;
     /** Sum of item_count over the checked plan actions — the "≈N" reference total. */
     checkedTotal: number;
+    noun?: "Copy" | "Migration" | "Sync";
     oncancel: () => void;
     oncontinue: () => void;
   } = $props();
+
+  const verb = $derived(noun === "Copy" ? "Copying" : noun === "Sync" ? "Syncing" : "Migrating");
 
   const progressNew = $derived(appliedByReason(outcomes, "new"));
   const progressDifferent = $derived(appliedByReason(outcomes, "different"));
@@ -87,19 +93,19 @@
     {:else if applying && phase === "emptying_origin"}
       <h2>Emptying origin… <span class="spinner mig-spinner"></span></h2>
     {:else if applying}
-      <h2>Migrating… <span class="spinner mig-spinner"></span></h2>
+      <h2>{verb}… <span class="spinner mig-spinner"></span></h2>
     {:else if doneSummary?.cancelled}
-      <h2>Migration cancelled</h2>
+      <h2>{noun} cancelled</h2>
     {:else if moveSummary?.origin_deleted}
-      <h2>Migration complete — origin moved ✓</h2>
+      <h2>{noun} complete — origin moved ✓</h2>
     {:else}
-      <h2>Migration {doneSummary?.failed ? "completed with errors" : "complete ✓"}</h2>
+      <h2>{noun} {doneSummary?.failed ? "completed with errors" : "complete ✓"}</h2>
     {/if}
 
     <p class="mig-dir">
-      {#if originSpec}<span class="ico">{slugOf(originSpec).icon}</span> {slugOf(originSpec).label}{/if}
+      {#if originSpec}<SourceIcon icon={slugOf(originSpec).icon} size="compact" /> {slugOf(originSpec).label}{/if}
       <span class="arrow">→</span>
-      {#if destSpec}<span class="ico">{slugOf(destSpec).icon}</span> {slugOf(destSpec).label}{/if}
+      {#if destSpec}<SourceIcon icon={slugOf(destSpec).icon} size="compact" /> {slugOf(destSpec).label}{/if}
     </p>
 
     <!-- Per-category counts (live while running, final when done) -->
@@ -123,7 +129,13 @@
         {#if i === firstMovedIdx}
           <div class="mig-verify-divider">✓ Re-verified — all origin files identical in destination. Now deleting the origin:</div>
         {/if}
-        <div class="mig-outcome" class:mig-ok={o.ok && !o.skipped} class:mig-fail={!o.ok} class:mig-skip={o.skipped}>
+        <div
+          class="mig-outcome"
+          class:mig-ok={o.ok && !o.skipped}
+          class:mig-fail={!o.ok}
+          class:mig-skip={o.skipped}
+          title={o.error ?? undefined}
+        >
           <span class="mig-outcome-icon">{o.skipped ? "—" : o.ok ? "✓" : "✗"}</span>
           <span class="mig-outcome-path">{o.path}</span>
           <span class="mig-outcome-op"
@@ -131,7 +143,7 @@
             class:plan-override={o.reason === "different"}
             class:plan-danger={o.reason === "extra" || o.reason === "moved"}
           >{opLabel(o)}</span>
-          {#if o.error}<span class="mig-outcome-err" title={o.error}>⚠</span>{/if}
+          {#if o.error}<span class="mig-outcome-err">⚠</span>{/if}
         </div>
       {/each}
       {#if applying}
@@ -299,7 +311,6 @@
   .mig-outcome-err {
     flex: none;
     color: #e8a33d;
-    cursor: help;
     font-size: 0.8rem;
   }
   /* MOVE (M2) result block */

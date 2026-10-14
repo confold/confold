@@ -23,7 +23,7 @@ use confold_s3::{S3Config, S3Source};
 #[allow(unused_imports)]
 use confold_sftp::{SftpAuth, SftpConfig, SftpSource};
 #[allow(unused_imports)]
-use confold_sync::{apply as sync_apply, ActionOutcome, SyncAction, SyncOp};
+use confold_sync::{apply_mixed as sync_apply_mixed, ActionOutcome, SyncAction, SyncOp};
 #[allow(unused_imports)]
 use confold_textdiff::{diff_hunks, diff_text, is_binary_bytes, FileDiff, FileDiffHunks};
 #[allow(unused_imports)]
@@ -31,11 +31,109 @@ use serde::{Deserialize, Serialize};
 #[allow(unused_imports)]
 use std::collections::{BTreeMap, HashMap};
 #[allow(unused_imports)]
+use std::fs::{File, OpenOptions};
+#[allow(unused_imports)]
+use std::io::Write;
+#[allow(unused_imports)]
+use std::path::Path;
+#[allow(unused_imports)]
 use std::sync::atomic::{AtomicU64, Ordering};
 #[allow(unused_imports)]
 use std::sync::{Arc, LazyLock, Mutex};
 #[allow(unused_imports)]
+use std::time::{SystemTime, UNIX_EPOCH};
+#[allow(unused_imports)]
 use tauri::{AppHandle, Emitter, State};
+
+/// One diagnostics file per apply run: `<cache>/logs/apply-<kind>-<unix_ms>.log`. Failure rows land
+/// here with their error text — the progress modal only keeps them in memory (and as hover titles).
+fn open_apply_log_in(dir: &Path, kind: &str, header: &str) -> std::io::Result<File> {
+    std::fs::create_dir_all(dir)?;
+    // pid + a process-wide counter keep same-millisecond runs from sharing (and interleaving) a file.
+    static LOG_SEQ: AtomicU64 = AtomicU64::new(0);
+    let seq = LOG_SEQ.fetch_add(1, Ordering::Relaxed);
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join(format!(
+            "apply-{kind}-{}-{ts}-{seq}.log",
+            std::process::id()
+        )))?;
+    writeln!(file, "{header}")?;
+    Ok(file)
+}
+
+fn open_apply_log(kind: &str, header: &str) -> Option<File> {
+    open_apply_log_in(&crate::shell::cache_dir().join("logs"), kind, header).ok()
+}
+
+fn log_failure(log: &mut Option<File>, outcome: &ActionOutcome) {
+    if let (Some(file), Some(error)) = (log.as_mut(), &outcome.error) {
+        let _ = writeln!(
+            file,
+            "FAIL\t{:?}\t{}\t{error}",
+            outcome.op, outcome.rel_path
+        );
+    }
+}
+
+/// Apply logs are diagnostics, not data: once the cache dir grows past the threshold, startup drops
+/// apply logs older than the retention window (the rest of the cache is a few KiB by design).
+const LOG_PRUNE_THRESHOLD_BYTES: u64 = 100 * 1024 * 1024;
+const LOG_PRUNE_MAX_AGE_DAYS: u64 = 30;
+
+fn dir_size(dir: &Path) -> u64 {
+    let mut total = 0;
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                total += dir_size(&path);
+            } else if let Ok(meta) = entry.metadata() {
+                total += meta.len();
+            }
+        }
+    }
+    total
+}
+
+/// Name shape: `apply-<kind>-<pid>-<unix_ms>-<seq>.log` — the millis are the second-to-last segment.
+fn log_started_at(name: &str) -> Option<SystemTime> {
+    let stem = name.strip_prefix("apply-")?.strip_suffix(".log")?;
+    let segments: Vec<&str> = stem.split('-').collect();
+    let millis = segments
+        .get(segments.len().checked_sub(2)?)?
+        .parse::<u64>()
+        .ok()?;
+    SystemTime::UNIX_EPOCH.checked_add(std::time::Duration::from_millis(millis))
+}
+
+pub(crate) fn prune_apply_logs(cache: &Path, now: SystemTime) -> usize {
+    if dir_size(cache) <= LOG_PRUNE_THRESHOLD_BYTES {
+        return 0;
+    }
+    let max_age = std::time::Duration::from_secs(LOG_PRUNE_MAX_AGE_DAYS * 24 * 3600);
+    let mut removed = 0;
+    if let Ok(entries) = std::fs::read_dir(cache.join("logs")) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let stale = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .and_then(log_started_at)
+                .and_then(|started| now.duration_since(started).ok())
+                .is_some_and(|age| age > max_age);
+            if stale && std::fs::remove_file(&path).is_ok() {
+                removed += 1;
+            }
+        }
+    }
+    removed
+}
 
 /// Progress of one concrete migrate operation (a `SyncAction` may expand into several — e.g. a
 /// directory copy yields one per descendant). Streamed to the UI as each completes.
@@ -66,9 +164,13 @@ pub(crate) struct MigrateSummary {
 /// Pure (no Tauri/IO of its own): `cancelled` is polled before each action (so a long single action —
 /// e.g. a large directory copy — is not interrupted mid-way; cancellation granularity is per top-level
 /// action), and `on_outcome` is called for every concrete outcome. Reuses the sync engine's `apply`.
+/// Only the sides in `left_mut`/`right_mut` may be written to; the plain sources serve as read
+/// origins (a read-only backend like Nuxeo migrates fine as long as it is never the destination).
 pub(crate) fn run_migrate(
-    left: &dyn SourceMut,
-    right: &dyn SourceMut,
+    left: &dyn Source,
+    right: &dyn Source,
+    left_mut: Option<&dyn SourceMut>,
+    right_mut: Option<&dyn SourceMut>,
     actions: &[MigrateAction],
     cancelled: impl Fn() -> bool,
     mut on_outcome: impl FnMut(&ActionOutcome, MigrateReason),
@@ -87,7 +189,14 @@ pub(crate) fn run_migrate(
                     summary.cancelled = true;
                     return summary;
                 }
-                for outcome in sync_apply(left, right, &[leaf.to_sync_action(action.op)], false) {
+                for outcome in sync_apply_mixed(
+                    left,
+                    right,
+                    left_mut,
+                    right_mut,
+                    &[leaf.to_sync_action(action.op)],
+                    false,
+                ) {
                     summary.total += 1;
                     if outcome.ok {
                         summary.ok += 1;
@@ -99,7 +208,14 @@ pub(crate) fn run_migrate(
             }
         } else {
             // File action, delete, or manually-constructed action (e.g. tests): single apply call.
-            for outcome in sync_apply(left, right, &[action.to_sync_action()], false) {
+            for outcome in sync_apply_mixed(
+                left,
+                right,
+                left_mut,
+                right_mut,
+                &[action.to_sync_action()],
+                false,
+            ) {
                 summary.total += 1;
                 if outcome.ok {
                     summary.ok += 1;
@@ -111,6 +227,19 @@ pub(crate) fn run_migrate(
         }
     }
     summary
+}
+
+/// Which sides a batch writes to. `delete_origin` implies the left side (the move's origin erase).
+pub(crate) fn write_sides(ops: impl Iterator<Item = SyncOp>, delete_origin: bool) -> (bool, bool) {
+    let mut left = delete_origin;
+    let mut right = false;
+    for op in ops {
+        match op {
+            SyncOp::CopyLeftToRight | SyncOp::DeleteRight => right = true,
+            SyncOp::CopyRightToLeft | SyncOp::DeleteLeft => left = true,
+        }
+    }
+    (left, right)
 }
 
 // ── M2: move semantics (delete origin after a verified-complete migration) ───────────────────────
@@ -376,8 +505,20 @@ pub(crate) fn migrate_apply(
     };
     // Build sources before claiming the generation: a connection error must propagate synchronously to
     // the UI without bumping the generation (which would cancel any apply still in flight from a prior run).
-    let l = build_source_mut(&left)?;
-    let r = build_source_mut(&right)?;
+    // Only the written sides need SourceMut — a read-only origin (e.g. Nuxeo) migrates as a plain source.
+    let (writes_left, writes_right) = write_sides(actions.iter().map(|a| a.op), delete_origin);
+    let l = build_source(&left)?;
+    let r = build_source(&right)?;
+    let l_mut = if writes_left {
+        Some(build_source_mut(&left)?)
+    } else {
+        None
+    };
+    let r_mut = if writes_right {
+        Some(build_source_mut(&right)?)
+    } else {
+        None
+    };
     state.migrate_gen.store(generation, Ordering::SeqCst);
     let cancel_token = Arc::clone(&state.migrate_gen);
     std::thread::spawn(move || {
@@ -395,12 +536,18 @@ pub(crate) fn migrate_apply(
                 },
             );
         };
+        let mut log = open_apply_log("migrate", "migrate apply");
         let summary = run_migrate(
             l.as_ref(),
             r.as_ref(),
+            l_mut.as_deref(),
+            r_mut.as_deref(),
             &actions,
             is_cancelled,
-            |o, reason| emit_progress(o, reason),
+            |o, reason| {
+                log_failure(&mut log, o);
+                emit_progress(o, reason)
+            },
         );
 
         // M2 move: re-verify (full) and, all-or-nothing, delete the origin. Only when requested and the
@@ -424,20 +571,27 @@ pub(crate) fn migrate_apply(
                     },
                 );
                 let mut emitted_emptying = false;
-                let result =
-                    move_origin(l.as_ref(), r.as_ref(), filters, is_cancelled, |outcome| {
-                        if !emitted_emptying {
-                            emitted_emptying = true;
-                            let _ = app.emit(
-                                MIGRATE_PHASE,
-                                MigratePhase {
-                                    generation,
-                                    phase: "emptying_origin",
-                                },
-                            );
-                        }
-                        emit_progress(outcome, MigrateReason::Moved);
-                    });
+                // delete_origin forces `writes_left`, so the mutable origin handle exists here.
+                let l_write = l_mut
+                    .as_deref()
+                    .expect("move requires a mutable origin source");
+                let r_write = r_mut
+                    .as_deref()
+                    .expect("move requires a mutable destination source");
+                let result = move_origin(l_write, r_write, filters, is_cancelled, |outcome| {
+                    log_failure(&mut log, outcome);
+                    if !emitted_emptying {
+                        emitted_emptying = true;
+                        let _ = app.emit(
+                            MIGRATE_PHASE,
+                            MigratePhase {
+                                generation,
+                                phase: "emptying_origin",
+                            },
+                        );
+                    }
+                    emit_progress(outcome, MigrateReason::Moved);
+                });
                 Some(result.unwrap_or_else(|e| MoveSummary {
                     attempted: true,
                     blockers: vec![format!("re-verification failed: {e}")],
@@ -466,26 +620,215 @@ pub(crate) fn migrate_cancel(state: State<AppState>) {
     state.migrate_gen.store(0, Ordering::SeqCst);
 }
 
-/// Preview (dry-run) the effect of a batch of sync actions — writes nothing.
+/// Preview (dry-run) the effect of a batch of sync actions — writes nothing, so neither side needs
+/// write access.
 #[tauri::command]
 pub(crate) fn plan_actions(
     left: SourceSpec,
     right: SourceSpec,
     actions: Vec<SyncAction>,
 ) -> Result<Vec<ActionOutcome>, String> {
-    let l = build_source_mut(&left)?;
-    let r = build_source_mut(&right)?;
-    Ok(sync_apply(l.as_ref(), r.as_ref(), &actions, true))
+    let l = build_source(&left)?;
+    let r = build_source(&right)?;
+    Ok(sync_apply_mixed(
+        l.as_ref(),
+        r.as_ref(),
+        None,
+        None,
+        &actions,
+        true,
+    ))
 }
 
-/// Execute a batch of sync actions (copy/delete left↔right) and report per-operation outcomes.
+/// Execute a batch of sync actions (copy/delete left↔right) on a **background thread** — same shape
+/// as [`migrate_apply`]: returns immediately, each concrete outcome streams via `migrate-progress`,
+/// and the final tally arrives via `migrate-done` (tagged with `generation`; no move phase). Only
+/// the side(s) the batch writes to are required to be mutable.
 #[tauri::command]
 pub(crate) fn apply_actions(
+    state: State<AppState>,
+    app: AppHandle,
     left: SourceSpec,
     right: SourceSpec,
     actions: Vec<SyncAction>,
-) -> Result<Vec<ActionOutcome>, String> {
-    let l = build_source_mut(&left)?;
-    let r = build_source_mut(&right)?;
-    Ok(sync_apply(l.as_ref(), r.as_ref(), &actions, false))
+    generation: u64,
+) -> Result<(), String> {
+    if generation == 0 {
+        return Err("invalid apply generation (0 is reserved for cancellation)".to_owned());
+    }
+    let (writes_left, writes_right) = write_sides(actions.iter().map(|a| a.op), false);
+    let l = build_source(&left)?;
+    let r = build_source(&right)?;
+    let l_mut = if writes_left {
+        Some(build_source_mut(&left)?)
+    } else {
+        None
+    };
+    let r_mut = if writes_right {
+        Some(build_source_mut(&right)?)
+    } else {
+        None
+    };
+    state.migrate_gen.store(generation, Ordering::SeqCst);
+    let cancel_token = Arc::clone(&state.migrate_gen);
+    std::thread::spawn(move || {
+        let is_cancelled = || cancel_token.load(Ordering::SeqCst) != generation;
+        let reason_for = |op: SyncOp| match op {
+            SyncOp::DeleteLeft | SyncOp::DeleteRight => MigrateReason::Extra,
+            SyncOp::CopyLeftToRight | SyncOp::CopyRightToLeft => MigrateReason::New,
+        };
+        let emit = |outcome: &ActionOutcome| {
+            let _ = app.emit(
+                MIGRATE_PROGRESS,
+                MigrateProgress {
+                    generation,
+                    rel_path: outcome.rel_path.components().to_vec(),
+                    op: outcome.op,
+                    reason: reason_for(outcome.op),
+                    ok: outcome.ok,
+                    error: outcome.error.clone(),
+                },
+            );
+        };
+        let mut summary = MigrateSummary::default();
+        let mut log = open_apply_log("copy", "manual apply from the compare view");
+        // Per-action loop: cancellation is polled between actions (a directory action expands
+        // internally, so its files run to completion — same granularity as the migrate apply).
+        for action in &actions {
+            if is_cancelled() {
+                summary.cancelled = true;
+                break;
+            }
+            for outcome in sync_apply_mixed(
+                l.as_ref(),
+                r.as_ref(),
+                l_mut.as_deref(),
+                r_mut.as_deref(),
+                std::slice::from_ref(action),
+                false,
+            ) {
+                summary.total += 1;
+                if outcome.ok {
+                    summary.ok += 1;
+                } else {
+                    summary.failed += 1;
+                }
+                log_failure(&mut log, &outcome);
+                emit(&outcome);
+            }
+        }
+        let _ = app.emit(
+            MIGRATE_DONE,
+            MigrateDone {
+                generation,
+                summary,
+                move_result: None,
+            },
+        );
+    });
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn apply_failures_are_logged_with_their_error_text() {
+        let dir = std::env::temp_dir().join(format!(
+            "confold-apply-log-test-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut log = Some(
+            open_apply_log_in(&dir, "test", "manual apply from the compare view")
+                .expect("log file opens"),
+        );
+        log_failure(
+            &mut log,
+            &ActionOutcome {
+                rel_path: RelPath::root().child("informe.pdf"),
+                op: SyncOp::CopyLeftToRight,
+                ok: false,
+                error: Some("Nuxeo ranged read: HTTP 404".to_owned()),
+            },
+        );
+        log_failure(
+            &mut log,
+            &ActionOutcome {
+                rel_path: RelPath::root().child("ok.pdf"),
+                op: SyncOp::CopyLeftToRight,
+                ok: true,
+                error: None,
+            },
+        );
+        drop(log);
+        let contents = std::fs::read_to_string(
+            std::fs::read_dir(&dir)
+                .unwrap()
+                .next()
+                .unwrap()
+                .unwrap()
+                .path(),
+        )
+        .unwrap();
+        assert!(contents.starts_with("manual apply from the compare view\n"));
+        assert!(
+            contents.contains("FAIL\tCopyLeftToRight\tinforme.pdf\tNuxeo ranged read: HTTP 404")
+        );
+        assert!(!contents.contains("ok.pdf"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod prune_tests {
+    use super::*;
+
+    fn ms_days_ago(days: u64) -> u128 {
+        let offset = std::time::Duration::from_secs(days * 24 * 3600);
+        (SystemTime::now() - offset)
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+    }
+
+    #[test]
+    fn pruning_keeps_recent_logs_and_only_touches_apply_logs_when_over_threshold() {
+        let cache = tempfile::tempdir().unwrap();
+        let logs = cache.path().join("logs");
+        std::fs::create_dir_all(&logs).unwrap();
+        let old = logs.join(format!("apply-copy-999-{}-0.log", ms_days_ago(40)));
+        let fresh = logs.join(format!("apply-migrate-999-{}-7.log", ms_days_ago(1)));
+        let stray = logs.join("notes.txt");
+        std::fs::write(&old, b"old").unwrap();
+        std::fs::write(&fresh, b"fresh").unwrap();
+        std::fs::write(&stray, b"keep").unwrap();
+
+        // Under the threshold: a no-op even though one log is 40 days old.
+        assert_eq!(prune_apply_logs(cache.path(), SystemTime::now()), 0);
+        assert!(old.exists());
+
+        // Over the threshold: the 40-day-old apply log goes, the rest stays.
+        let filler = cache.path().join("ballast.bin");
+        std::fs::write(&filler, vec![0u8; (LOG_PRUNE_THRESHOLD_BYTES + 1) as usize]).unwrap();
+        let removed = prune_apply_logs(cache.path(), SystemTime::now());
+        assert_eq!(removed, 1);
+        assert!(!old.exists());
+        assert!(fresh.exists());
+        assert!(stray.exists());
+    }
+
+    #[test]
+    fn log_started_at_parses_kind_and_timestamp_from_the_file_name() {
+        let t = log_started_at("apply-copy-999-1700000000000-0.log").unwrap();
+        assert_eq!(
+            t.duration_since(UNIX_EPOCH).unwrap().as_millis(),
+            1700000000000
+        );
+        assert!(log_started_at("notes.txt").is_none());
+        assert!(log_started_at("apply-copy-notanumber.log").is_none());
+    }
 }
