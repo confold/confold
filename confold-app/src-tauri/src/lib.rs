@@ -35,7 +35,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[allow(unused_imports)]
 use std::sync::{Arc, LazyLock, Mutex};
 #[allow(unused_imports)]
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 // ── Event name constants — shared across modules ────────────────────────────────────────────────
 pub(crate) const ENTRY_RESOLVED: &str = "entry-resolved";
@@ -114,6 +114,28 @@ pub fn run() {
             semantic_apply_to,
             semantic_apply_new,
         ])
+        .setup(|app| {
+            // The configured default size can exceed a small monitor; keep the window within the
+            // work area (dock/taskbar excluded) so launch never clips or goes off-screen.
+            if let Some(window) = app.get_webview_window("main") {
+                let monitor = window.current_monitor().ok().flatten();
+                let size = window.outer_size().ok();
+                if let (Some(monitor), Some(size)) = (monitor, size) {
+                    let area = monitor.work_area();
+                    let max_logical_w = area.size.width as f64 / monitor.scale_factor() * 0.95;
+                    let max_logical_h = area.size.height as f64 / monitor.scale_factor() * 0.95;
+                    let scale = window.scale_factor().unwrap_or(1.0);
+                    let logical_w = size.width as f64 / scale;
+                    let logical_h = size.height as f64 / scale;
+                    let new_w = logical_w.min(max_logical_w);
+                    let new_h = logical_h.min(max_logical_h);
+                    if new_w < logical_w || new_h < logical_h {
+                        let _ = window.set_size(tauri::LogicalSize::new(new_w, new_h));
+                    }
+                }
+            }
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

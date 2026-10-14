@@ -2128,10 +2128,10 @@
     color: #c0392b;
     border-color: rgba(192, 57, 43, 0.4);
   }
-  .recent .ico {
-    flex: none;
-  }
   .recent .rslug {
+    /* min-width:0 lets the slug shrink below its text width so the ellipsis actually engages;
+       without it the chip's min-content keeps both launcher columns at full-text width. */
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -2240,6 +2240,11 @@
     display: flex;
     flex-direction: column;
     min-height: 79vh;
+    /* Definite width: as a bare auto+margins flex item of `main`, the entry column sizes to
+       fit-content whose min-content floor is driven by the widest recent chip (intrinsic
+       contributions ignore min-width:0), overflowing narrow windows. width:100% anchors it
+       to the viewport-sized container; max-width re-caps the centered column. */
+    width: 100%;
     max-width: 1000px;
     margin: 0 auto;
   }

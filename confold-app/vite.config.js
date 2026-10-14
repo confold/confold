@@ -27,6 +27,12 @@ export default defineConfig(async () => ({
   plugins: [sveltekit()],
   resolve: { alias: e2eAlias },
 
+  // Pre-transform the entry routes while the dev server boots: the first request otherwise pays the
+  // whole cold compile, which raced the Playwright smokes into a blank first page.
+  warmup: {
+    clientFiles: ["./src/routes/+layout.svelte", "./src/routes/+page.svelte"],
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors
