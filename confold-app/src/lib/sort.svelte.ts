@@ -27,15 +27,20 @@ const maxMtime = (e: DiffEntry) => Math.max(e.left?.mtime ?? 0, e.right?.mtime ?
  */
 export function sortEntries(
   entries: DiffEntry[],
-  statusOf: (e: DiffEntry) => string = (e) => e.status,
+  statusOf: (e: DiffEntry) => string | null = (e) => e.status,
 ): DiffEntry[] {
   const k = sortState.key;
   const out = [...entries];
   out.sort((a, b) => {
     if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1; // dirs first
     switch (k) {
-      case "status":
-        return (STATUS_ORDER[statusOf(a)] - STATUS_ORDER[statusOf(b)]) || a.name.localeCompare(b.name);
+      case "status": {
+        const sA = statusOf(a);
+        const sB = statusOf(b);
+        const orderA = sA ? (STATUS_ORDER[sA] ?? 4) : 4;
+        const orderB = sB ? (STATUS_ORDER[sB] ?? 4) : 4;
+        return (orderA - orderB) || a.name.localeCompare(b.name);
+      }
       case "size":
         return maxSize(b) - maxSize(a) || a.name.localeCompare(b.name);
       case "mtime":

@@ -51,6 +51,10 @@ describe("sortEntries", () => {
     // dir (effective "different") sorts before dir2 ("identical").
     expect(out.map((e) => e.name)).toEqual(["d", "e"]);
     expect(file.name).toBe("f"); // (file kept to document the dirs-first rule)
+
+    // Unresolved pending dir returning null from statusOf falls back safely
+    const unresolvedOut = sortEntries([dir2, dir], () => null);
+    expect(unresolvedOut.map((e) => e.name)).toEqual(["d", "e"]); // name tie-break
   });
 
   it("sorts by size descending (largest of the two sides)", () => {

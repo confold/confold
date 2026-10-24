@@ -57,4 +57,42 @@ describe("filter store", () => {
       e.status === "skipped" && e.detail === "not descended" ? "identical" : e.status;
     expect(nodeVisible(dir, statusOf)).toBe(false);
   });
+
+  it("an unresolved lazy dir stays visible even when skipped is hidden", () => {
+    // Hiding "skipped" must hide filtered/excluded files and symlinks, but MUST NOT hide
+    // an un-descended directory present on both sides (e.g. 2014 - Presupuestos).
+    toggleStatus("skipped");
+    expect(hidden.has("skipped")).toBe(true);
+
+    const pendingDir = entry({
+      name: "2014 - Presupuestos",
+      is_dir: true,
+      status: "skipped",
+      detail: "not descended",
+      children: [],
+    });
+    // Default statusOf detects isPending and returns null -> stays visible
+    expect(nodeVisible(pendingDir)).toBe(true);
+
+    // Explicit statusOf returning null (unresolved) stays visible
+    expect(nodeVisible(pendingDir, () => null)).toBe(true);
+
+    // Genuinely filtered item (e.g. *.tmp or excluded folder) IS hidden when skipped is hidden
+    const filteredDir = entry({
+      name: "node_modules",
+      is_dir: true,
+      status: "skipped",
+      detail: "filtered",
+      children: [],
+    });
+    expect(nodeVisible(filteredDir)).toBe(false);
+
+    const filteredFile = entry({
+      name: "test.tmp",
+      is_dir: false,
+      status: "skipped",
+      detail: "filtered",
+    });
+    expect(nodeVisible(filteredFile)).toBe(false);
+  });
 });

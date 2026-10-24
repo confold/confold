@@ -1284,7 +1284,7 @@
   let focusPath = $state<string[]>([]);
 
   type Row = { entry: DiffEntry; depth: number; loading: boolean; resolvedStatus: DiffStatus | null };
-  type StatusOf = (e: DiffEntry) => DiffStatus;
+  type StatusOf = (e: DiffEntry) => DiffStatus | null;
   function flattenInto(entries: DiffEntry[], depth: number, out: Row[], statusOf: StatusOf) {
     for (const e of sortEntries(entries, statusOf)) {
       if (!nodeVisible(e, statusOf)) continue;
@@ -1316,15 +1316,15 @@
   const focused = $derived(report ? entryAtPath(report.root, focusPath) : null);
   const rows = $derived.by<Row[]>(() => {
     const out: Row[] = [];
-    // Effective status for filtering: resolved status for a loaded pending dir, raw otherwise.
-    // An unresolved pending dir keeps its raw `skipped` (stays visible until its subtree is known).
+    // Effective status for filtering: resolved status for a loaded pending dir, null if still unresolved.
+    // An unresolved pending dir (resolveDir === null) stays visible until its subtree is known.
     // Memoised per pass — the filter recurses into descendants, so without a cache this is O(n²).
-    const cache = new Map<string, DiffStatus>();
+    const cache = new Map<string, DiffStatus | null>();
     const statusOf: StatusOf = (e) => {
       const key = e.rel_path.join("/");
       const hit = cache.get(key);
       if (hit !== undefined) return hit;
-      const s = isPending(e) ? (resolveDir(e) ?? e.status) : e.status;
+      const s = isPending(e) ? resolveDir(e) : e.status;
       cache.set(key, s);
       return s;
     };
