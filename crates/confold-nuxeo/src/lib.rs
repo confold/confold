@@ -1,8 +1,8 @@
-//! Nuxeo read-only data source for Confold.
+//! Nuxeo data source for Confold.
 //!
-//! Wraps the Nuxeo REST API (LTS 2023/2025) behind the [`confold_vfs::Source`] trait so the
-//! compare/migrate/sync engine treats a Nuxeo repository like any other backend. Read-only:
-//! `capabilities = list + read + fingerprint` (no write — Nuxeo is a migration *origin*).
+//! Wraps the Nuxeo REST API (LTS 2023/2025) behind the [`confold_vfs::Source`] and
+//! [`confold_vfs::SourceMut`] traits so the compare/migrate/sync engine treats a Nuxeo repository
+//! like any other backend (supporting both read-only origins and writable destinations).
 //!
 //! **Tree mapping** (design note: `confold.nuxeo-paperless-connectors`, option B):
 //! - a folderish document (facet `Folderish`) maps to a directory, named by its **title**;
@@ -35,6 +35,7 @@ use std::sync::Mutex;
 
 use confold_vfs::{
     Capabilities, ContentReader, EntryKind, EntryMeta, Fingerprint, RelPath, Source, SourceError,
+    SourceMut,
 };
 use serde::{Deserialize, Serialize};
 use time::format_description::well_known::Rfc3339;
@@ -107,9 +108,10 @@ pub struct NuxeoSource {
 enum NuxeoIdentity {
     /// A folderish document — listable, never openable.
     Folder { doc_path: String },
-    /// A leaf document presenting as a single file: its main blob.
+    /// A leaf document presenting as a single file: its main blob or solitary attachment.
     File {
         doc_path: String,
+        xpath: String,
         length: u64,
         digest: Option<String>,
     },
@@ -291,6 +293,14 @@ impl NuxeoSource {
         }
     }
 
+    /// Drop cached identity for `rel` and all identities in its entire subtree.
+    fn forget_subtree_of(&self, rel: &RelPath) {
+        let rel_str = rel.to_string();
+        let prefix = format!("{rel}/");
+        let mut identities = self.lock_identities();
+        identities.retain(|key, _| key != &rel_str && !key.starts_with(&prefix));
+    }
+
     fn insert_identity(&self, rel: &RelPath, identity: NuxeoIdentity) {
         self.lock_identities().insert(rel.to_string(), identity);
     }
@@ -303,13 +313,14 @@ impl NuxeoSource {
         let identities = self.lock_identities();
         if let Some(NuxeoIdentity::File {
             doc_path,
+            xpath,
             length,
             digest,
         }) = identities.get(&rel.to_string())
         {
             return Some(ResolvedBlob {
                 doc_path: doc_path.clone(),
-                xpath: "file:content".to_owned(),
+                xpath: xpath.clone(),
                 blob: NuxeoBlob {
                     name: Some(name.to_owned()),
                     length: Some(*length),
@@ -520,6 +531,503 @@ impl NuxeoSource {
             fallback: Mutex::new(None),
         }))
     }
+
+    fn upload_url(&self, tail: &[&str]) -> Result<reqwest::Url, SourceError> {
+        let mut url = self.api.clone();
+        let mut segments = url
+            .path_segments_mut()
+            .map_err(|_| SourceError::Other("invalid API base URL".to_owned()))?;
+        segments.push("upload");
+        segments.extend(tail.iter().copied());
+        drop(segments);
+        Ok(url)
+    }
+
+    fn init_batch(&self) -> Result<String, SourceError> {
+        let url = self.upload_url(&[])?;
+        let resp_str = self.runtime.block_on(async {
+            let resp = self
+                .client
+                .post(url)
+                .basic_auth(&self.username, Some(&self.password))
+                .send()
+                .await
+                .map_err(|e| SourceError::Other(format!("Nuxeo batch init: {e}")))?;
+            let status = resp.status();
+            let body = resp
+                .text()
+                .await
+                .map_err(|e| SourceError::Other(format!("Nuxeo batch init read: {e}")))?;
+            if !status.is_success() {
+                return Err(SourceError::Other(format!(
+                    "Nuxeo batch init: HTTP {}",
+                    status.as_u16()
+                )));
+            }
+            Ok(body)
+        })?;
+        let batch: BatchInitResponse = serde_json::from_str(&resp_str)
+            .map_err(|e| SourceError::Other(format!("Nuxeo batch init parse: {e}")))?;
+        Ok(batch.batch_id)
+    }
+
+    fn upload_blob_from_reader(
+        &self,
+        batch_id: &str,
+        file_name: &str,
+        data: &dyn ContentReader,
+        len: u64,
+    ) -> Result<(), SourceError> {
+        const CHUNK_SIZE: u64 = 8 * 1024 * 1024; // 8 MiB bounded memory
+        let safe_name = if file_name.is_ascii()
+            && !file_name.contains('\n')
+            && !file_name.contains('\r')
+            && !file_name.contains(';')
+        {
+            file_name.to_owned()
+        } else {
+            let mut encoded = String::new();
+            for b in file_name.bytes() {
+                if b.is_ascii_alphanumeric() || b == b'.' || b == b'-' || b == b'_' {
+                    encoded.push(b as char);
+                } else {
+                    use std::fmt::Write;
+                    let _ = write!(encoded, "%{:02X}", b);
+                }
+            }
+            encoded
+        };
+        let header_name = reqwest::header::HeaderValue::from_str(&safe_name)
+            .unwrap_or_else(|_| reqwest::header::HeaderValue::from_static("upload.bin"));
+        let url = self.upload_url(&[batch_id, "0"])?;
+
+        if len <= CHUNK_SIZE {
+            // Single request upload for files <= 8 MiB (and 0-byte files)
+            let mut buf = vec![0u8; len as usize];
+            if len > 0 {
+                let n = data.read_at(0, &mut buf)?;
+                if n != len as usize {
+                    return Err(SourceError::Other(format!(
+                        "unexpected short read from source reader: expected {len} bytes, read {n}"
+                    )));
+                }
+            }
+            self.runtime.block_on(async {
+                let resp = self
+                    .client
+                    .post(url)
+                    .basic_auth(&self.username, Some(&self.password))
+                    .header("X-File-Name", header_name)
+                    .header("X-File-Size", len.to_string())
+                    .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
+                    .body(buf)
+                    .send()
+                    .await
+                    .map_err(|e| SourceError::Other(format!("Nuxeo batch upload: {e}")))?;
+                let status = resp.status();
+                if !status.is_success() {
+                    return Err(SourceError::Other(format!(
+                        "Nuxeo batch upload: HTTP {}",
+                        status.as_u16()
+                    )));
+                }
+                Ok(())
+            })
+        } else {
+            // Chunked upload for files > 8 MiB: bounded memory of at most 8 MiB per chunk
+            let chunk_count = len.div_ceil(CHUNK_SIZE);
+            for i in 0..chunk_count {
+                let offset = i * CHUNK_SIZE;
+                let this_chunk_size = (len - offset).min(CHUNK_SIZE) as usize;
+                let mut buf = vec![0u8; this_chunk_size];
+                let n = data.read_at(offset, &mut buf)?;
+                if n != this_chunk_size {
+                    return Err(SourceError::Other(format!(
+                        "unexpected short read from source reader at offset {offset}: expected {this_chunk_size} bytes, read {n}"
+                    )));
+                }
+
+                self.runtime.block_on(async {
+                    let resp = self
+                        .client
+                        .post(url.clone())
+                        .basic_auth(&self.username, Some(&self.password))
+                        .header("X-Upload-Type", "chunked")
+                        .header("X-Upload-Chunk-Index", i.to_string())
+                        .header("X-Upload-Chunk-Count", chunk_count.to_string())
+                        .header("X-File-Name", header_name.clone())
+                        .header("X-File-Size", len.to_string())
+                        .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
+                        .body(buf)
+                        .send()
+                        .await
+                        .map_err(|e| SourceError::Other(format!("Nuxeo chunked upload: {e}")))?;
+                    let status = resp.status();
+                    if !status.is_success() {
+                        return Err(SourceError::Other(format!(
+                            "Nuxeo chunked upload: HTTP {}",
+                            status.as_u16()
+                        )));
+                    }
+                    Ok(())
+                })?;
+            }
+            Ok(())
+        }
+    }
+
+    fn drop_batch(&self, batch_id: &str) {
+        if let Ok(url) = self.upload_url(&[batch_id]) {
+            self.runtime.block_on(async {
+                let _ = self
+                    .client
+                    .delete(url)
+                    .basic_auth(&self.username, Some(&self.password))
+                    .send()
+                    .await;
+            });
+        }
+    }
+
+    fn create_folder_doc(
+        &self,
+        parent_doc_path: &str,
+        name: &str,
+        title: &str,
+    ) -> Result<NuxeoDoc, SourceError> {
+        let url = self.doc_url_str(parent_doc_path, &[])?;
+        let payload = serde_json::json!({
+            "entity-type": "document",
+            "type": "Folder",
+            "name": name,
+            "properties": {
+                "dc:title": title
+            }
+        });
+        let result = self.runtime.block_on(async {
+            let resp = self
+                .client
+                .post(url)
+                .basic_auth(&self.username, Some(&self.password))
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .body(payload.to_string())
+                .send()
+                .await
+                .map_err(|e| {
+                    SourceError::Other(format!("Nuxeo create folder at {parent_doc_path}: {e}"))
+                })?;
+            let status = resp.status();
+            let body = resp
+                .text()
+                .await
+                .map_err(|e| SourceError::Other(format!("Nuxeo read response: {e}")))?;
+            Ok::<_, SourceError>((status, body))
+        })?;
+        if result.0.is_success() {
+            serde_json::from_str(&result.1)
+                .map_err(|e| SourceError::Other(format!("Nuxeo create folder parse: {e}")))
+        } else if result.0.as_u16() == 409 {
+            Err(SourceError::Other(format!(
+                "HTTP 409 Conflict at {parent_doc_path}/{name}"
+            )))
+        } else {
+            Err(SourceError::Other(format!(
+                "Nuxeo create folder at {parent_doc_path}: HTTP {}",
+                result.0.as_u16()
+            )))
+        }
+    }
+
+    fn create_file_doc(
+        &self,
+        parent_doc_path: &str,
+        name: &str,
+        title: &str,
+        batch_id: &str,
+    ) -> Result<NuxeoDoc, SourceError> {
+        let url = self.doc_url_str(parent_doc_path, &[])?;
+        let payload = serde_json::json!({
+            "entity-type": "document",
+            "type": "File",
+            "name": name,
+            "properties": {
+                "dc:title": title,
+                "file:content": {
+                    "upload-batch": batch_id,
+                    "upload-batchId": batch_id,
+                    "upload-fileId": "0"
+                }
+            }
+        });
+        let result = self.runtime.block_on(async {
+            let resp = self
+                .client
+                .post(url)
+                .basic_auth(&self.username, Some(&self.password))
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .body(payload.to_string())
+                .send()
+                .await
+                .map_err(|e| {
+                    SourceError::Other(format!("Nuxeo create file at {parent_doc_path}: {e}"))
+                })?;
+            let status = resp.status();
+            let body = resp
+                .text()
+                .await
+                .map_err(|e| SourceError::Other(format!("Nuxeo read response: {e}")))?;
+            Ok::<_, SourceError>((status, body))
+        })?;
+        if result.0.is_success() {
+            serde_json::from_str(&result.1)
+                .map_err(|e| SourceError::Other(format!("Nuxeo create file parse: {e}")))
+        } else {
+            Err(SourceError::Other(format!(
+                "Nuxeo create file at {parent_doc_path}: HTTP {}",
+                result.0.as_u16()
+            )))
+        }
+    }
+
+    fn update_file_doc(
+        &self,
+        doc_path: &str,
+        xpath: &str,
+        title: &str,
+        batch_id: &str,
+    ) -> Result<NuxeoDoc, SourceError> {
+        let url = self.doc_url_str(doc_path, &[])?;
+        let blob_obj = serde_json::json!({
+            "upload-batch": batch_id,
+            "upload-batchId": batch_id,
+            "upload-fileId": "0"
+        });
+        // Codex Comment 1: If updating an attachment-only doc, target files:files rather than creating file:content
+        let properties = if xpath.starts_with("files:files/") {
+            serde_json::json!({
+                "dc:title": title,
+                "files:files": [{
+                    "file": blob_obj
+                }]
+            })
+        } else {
+            serde_json::json!({
+                "dc:title": title,
+                "file:content": blob_obj
+            })
+        };
+        let payload = serde_json::json!({
+            "entity-type": "document",
+            "properties": properties
+        });
+        let result = self.runtime.block_on(async {
+            let resp = self
+                .client
+                .put(url)
+                .basic_auth(&self.username, Some(&self.password))
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .header("X-Versioning-Option", "minor")
+                .body(payload.to_string())
+                .send()
+                .await
+                .map_err(|e| SourceError::Other(format!("Nuxeo update file at {doc_path}: {e}")))?;
+            let status = resp.status();
+            let body = resp
+                .text()
+                .await
+                .map_err(|e| SourceError::Other(format!("Nuxeo read response: {e}")))?;
+            Ok::<_, SourceError>((status, body))
+        })?;
+        if result.0.is_success() {
+            serde_json::from_str(&result.1)
+                .map_err(|e| SourceError::Other(format!("Nuxeo update file parse: {e}")))
+        } else {
+            Err(SourceError::Other(format!(
+                "Nuxeo update file at {doc_path}: HTTP {}",
+                result.0.as_u16()
+            )))
+        }
+    }
+
+    fn delete_doc(&self, doc_path: &str) -> Result<(), SourceError> {
+        let url = self.doc_url_str(doc_path, &[])?;
+        let status = self.runtime.block_on(async {
+            let resp = self
+                .client
+                .delete(url)
+                .basic_auth(&self.username, Some(&self.password))
+                .send()
+                .await
+                .map_err(|e| SourceError::Other(format!("Nuxeo delete {doc_path}: {e}")))?;
+            Ok::<_, SourceError>(resp.status())
+        })?;
+        if status.is_success() || status.as_u16() == 404 {
+            Ok(())
+        } else {
+            Err(SourceError::Other(format!(
+                "Nuxeo delete {doc_path}: HTTP {}",
+                status.as_u16()
+            )))
+        }
+    }
+
+    fn move_doc(
+        &self,
+        doc_path: &str,
+        target_parent_doc_path: &str,
+        new_name: &str,
+        new_title: &str,
+    ) -> Result<NuxeoDoc, SourceError> {
+        let url = self.doc_url_str(doc_path, &["@op", "Document.Move"])?;
+        let payload = serde_json::json!({
+            "params": {
+                "target": target_parent_doc_path,
+                "name": new_name
+            }
+        });
+        let result = self.runtime.block_on(async {
+            let resp = self
+                .client
+                .post(url)
+                .basic_auth(&self.username, Some(&self.password))
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .body(payload.to_string())
+                .send()
+                .await
+                .map_err(|e| SourceError::Other(format!("Nuxeo move {doc_path}: {e}")))?;
+            let status = resp.status();
+            let body = resp
+                .text()
+                .await
+                .map_err(|e| SourceError::Other(format!("Nuxeo read response: {e}")))?;
+            Ok::<_, SourceError>((status, body))
+        })?;
+        if !result.0.is_success() {
+            return Err(SourceError::Other(format!(
+                "Nuxeo move {doc_path}: HTTP {}",
+                result.0.as_u16()
+            )));
+        }
+        let moved: NuxeoDoc = serde_json::from_str(&result.1)
+            .map_err(|e| SourceError::Other(format!("Nuxeo move parse: {e}")))?;
+
+        if moved.title != new_title || !moved.is_folderish() {
+            let put_url = self.doc_url_str(&moved.path, &[])?;
+            let mut props = serde_json::Map::new();
+            if moved.title != new_title {
+                props.insert(
+                    "dc:title".to_owned(),
+                    serde_json::Value::String(new_title.to_owned()),
+                );
+            }
+            // Codex Comment 2: If renaming a file, update blob filename so extension changes survive classify_child
+            if !moved.is_folderish() {
+                if moved.properties.file_content.is_some() {
+                    props.insert(
+                        "file:content".to_owned(),
+                        serde_json::json!({ "name": new_title }),
+                    );
+                } else if moved.properties.files.len() == 1 {
+                    props.insert(
+                        "files:files".to_owned(),
+                        serde_json::json!([{ "file": { "name": new_title } }]),
+                    );
+                }
+            }
+
+            if !props.is_empty() {
+                let update_payload = serde_json::json!({
+                    "entity-type": "document",
+                    "properties": props
+                });
+                let put_result = self.runtime.block_on(async {
+                    let resp = self
+                        .client
+                        .put(put_url)
+                        .basic_auth(&self.username, Some(&self.password))
+                        .header(reqwest::header::CONTENT_TYPE, "application/json")
+                        .body(update_payload.to_string())
+                        .send()
+                        .await
+                        .map_err(|e| {
+                            SourceError::Other(format!("Nuxeo update title/filename at {}: {e}", moved.path))
+                        })?;
+                    let status = resp.status();
+                    let body = resp
+                        .text()
+                        .await
+                        .map_err(|e| SourceError::Other(format!("Nuxeo read response: {e}")))?;
+                    Ok::<_, SourceError>((status, body))
+                })?;
+                // Codex Comment 3: Propagate failed title/filename update rather than falsely claiming success
+                if !put_result.0.is_success() {
+                    return Err(SourceError::Other(format!(
+                        "Nuxeo update title/filename at {}: HTTP {}",
+                        moved.path,
+                        put_result.0.as_u16()
+                    )));
+                }
+                serde_json::from_str(&put_result.1)
+                    .map_err(|e| SourceError::Other(format!("Nuxeo update title parse: {e}")))
+            } else {
+                Ok(moved)
+            }
+        } else {
+            Ok(moved)
+        }
+    }
+
+    fn check_not_in_doc_dir(&self, rel: &RelPath) -> Result<(), SourceError> {
+        let mut curr = rel.parent();
+        while let Some(parent) = curr {
+            if let Some(NuxeoIdentity::DocDir { .. }) =
+                self.lock_identities().get(&parent.to_string())
+            {
+                return Err(SourceError::Other(format!(
+                    "Nuxeo: cannot mutate children inside multi-blob DocDir '{parent}'"
+                )));
+            }
+            curr = parent.parent();
+        }
+        Ok(())
+    }
+
+    fn resolve_identity(&self, rel: &RelPath) -> Result<Option<NuxeoIdentity>, SourceError> {
+        if rel.is_root() {
+            let doc_path = self.nuxeo_path(rel);
+            return Ok(Some(NuxeoIdentity::Folder { doc_path }));
+        }
+        if let Some(ident) = self.lock_identities().get(&rel.to_string()).cloned() {
+            return Ok(Some(ident));
+        }
+        let parent = rel
+            .parent()
+            .ok_or_else(|| SourceError::Other(format!("Nuxeo: '{rel}' has no parent")))?;
+        if let Some(NuxeoIdentity::DocDir { doc_path, blobs }) =
+            self.lock_identities().get(&parent.to_string()).cloned()
+        {
+            if let Some(name) = rel.file_name() {
+                if let Some((xpath, length)) = blobs.get(name) {
+                    return Ok(Some(NuxeoIdentity::File {
+                        doc_path,
+                        xpath: xpath.clone(),
+                        length: *length,
+                        digest: None,
+                    }));
+                }
+            }
+            return Ok(None);
+        }
+        match self.read_dir(&parent) {
+            Ok(_) => Ok(self.lock_identities().get(&rel.to_string()).cloned()),
+            Err(SourceError::Io { ref source, .. })
+                if source.kind() == std::io::ErrorKind::NotFound =>
+            {
+                Ok(None)
+            }
+            Err(e) => Err(e),
+        }
+    }
 }
 
 /// Normalize a configured root document path: leading `/`, no trailing `/`; empty → `""` (the
@@ -531,6 +1039,13 @@ fn normalize_root(root: &str) -> String {
     } else {
         format!("/{trimmed}")
     }
+}
+
+/// Response from `POST /api/v1/upload`.
+#[derive(Deserialize)]
+struct BatchInitResponse {
+    #[serde(rename = "batchId")]
+    batch_id: String,
 }
 
 /// A Nuxeo document JSON (the subset the mapping needs).
@@ -706,6 +1221,7 @@ fn classify_child(
         match blobs.len() {
             0 => None, // blob-less leaf (e.g. a Note): skipped
             1 => {
+                let xpath = blobs[0].xpath.clone();
                 let main = blobs[0].blob;
                 // Title first (what the user named the document); the blob filename and the path
                 // segment are fallbacks. Make sure the true file extension survives so the UI
@@ -724,6 +1240,7 @@ fn classify_child(
                     meta(name, EntryKind::File, main.length.unwrap_or(0)),
                     NuxeoIdentity::File {
                         doc_path,
+                        xpath,
                         length: main.length.unwrap_or(0),
                         digest: main.digest.clone(),
                     },
@@ -824,12 +1341,12 @@ fn unique_name(base: String, used: &mut HashSet<String>) -> String {
 
 impl Source for NuxeoSource {
     fn capabilities(&self) -> Capabilities {
-        // Read-only: list + read + fingerprint (blob digests). No write — Nuxeo is an origin.
+        // List + read + fingerprint (blob digests) + write.
         Capabilities {
             list: true,
             read: true,
             fingerprint: true,
-            write: false,
+            write: true,
         }
     }
 
@@ -919,6 +1436,251 @@ impl Source for NuxeoSource {
             .digest
             .as_deref()
             .map(|d| Fingerprint(d.as_bytes().to_vec())))
+    }
+}
+
+impl SourceMut for NuxeoSource {
+    fn create_dir_all(&self, rel: &RelPath) -> Result<(), SourceError> {
+        if rel.is_root() {
+            return Ok(());
+        }
+        self.check_not_in_doc_dir(rel)?;
+        let components = rel.components();
+        let mut current_rel = RelPath::root();
+        for comp in components {
+            current_rel = current_rel.child(comp);
+            match self.resolve_identity(&current_rel)? {
+                Some(NuxeoIdentity::Folder { .. }) => continue,
+                Some(NuxeoIdentity::DocDir { .. }) => {
+                    return Err(SourceError::Other(format!(
+                        "Nuxeo: '{current_rel}' is a multi-blob document, cannot create directory"
+                    )));
+                }
+                Some(NuxeoIdentity::File { .. }) => {
+                    return Err(SourceError::Other(format!(
+                        "Nuxeo: '{current_rel}' already exists as a file"
+                    )));
+                }
+                None => {
+                    let parent = current_rel.parent().unwrap();
+                    let parent_doc_path = match self.resolve_identity(&parent)? {
+                        Some(NuxeoIdentity::Folder { doc_path }) => doc_path,
+                        _ => {
+                            return Err(SourceError::Other(format!(
+                                "Nuxeo: parent '{parent}' is not a folder"
+                            )));
+                        }
+                    };
+                    let dir_name = current_rel.file_name().unwrap();
+                    let sanitized = sanitize_name(dir_name);
+                    let doc = match self.create_folder_doc(&parent_doc_path, &sanitized, dir_name) {
+                        Ok(doc) => doc,
+                        Err(e) => {
+                            let _ = self.read_dir(&parent);
+                            if let Some(NuxeoIdentity::Folder { .. }) =
+                                self.lock_identities().get(&current_rel.to_string())
+                            {
+                                continue;
+                            }
+                            return Err(e);
+                        }
+                    };
+                    self.insert_identity(
+                        &current_rel,
+                        NuxeoIdentity::Folder { doc_path: doc.path },
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn write_file(&self, rel: &RelPath, data: &dyn ContentReader) -> Result<(), SourceError> {
+        if rel.is_root() {
+            return Err(SourceError::Other("cannot write file at root".to_owned()));
+        }
+        self.check_not_in_doc_dir(rel)?;
+
+        let parent = rel.parent().unwrap();
+        self.create_dir_all(&parent)?;
+        let parent_doc_path = match self.resolve_identity(&parent)? {
+            Some(NuxeoIdentity::Folder { doc_path }) => doc_path,
+            _ => {
+                return Err(SourceError::Other(format!(
+                    "Nuxeo: parent '{parent}' is not a folder"
+                )));
+            }
+        };
+
+        let existing = self.resolve_identity(rel)?;
+        if let Some(NuxeoIdentity::Folder { .. }) | Some(NuxeoIdentity::DocDir { .. }) = existing {
+            return Err(SourceError::Other(format!(
+                "Nuxeo: '{rel}' already exists as a directory"
+            )));
+        }
+
+        let len = data.len();
+        let batch_id = self.init_batch()?;
+        let file_name = rel.file_name().unwrap_or("file");
+        if let Err(e) = self.upload_blob_from_reader(&batch_id, file_name, data, len) {
+            self.drop_batch(&batch_id);
+            return Err(e);
+        }
+
+        let (target_xpath, result) = match existing {
+            Some(NuxeoIdentity::File {
+                doc_path, xpath, ..
+            }) => {
+                let res = self.update_file_doc(&doc_path, &xpath, file_name, &batch_id);
+                (xpath, res)
+            }
+            _ => {
+                let sanitized = sanitize_name(file_name);
+                let res = self.create_file_doc(&parent_doc_path, &sanitized, file_name, &batch_id);
+                ("file:content".to_owned(), res)
+            }
+        };
+
+        match result {
+            Ok(doc) => {
+                // Codex Comment 2: Extract digest from correct property and preserve target XPath
+                let digest = if target_xpath == "file:content" {
+                    doc.properties.file_content.and_then(|b| b.digest)
+                } else {
+                    doc.properties
+                        .files
+                        .first()
+                        .and_then(|f| f.file.as_ref())
+                        .and_then(|b| b.digest.clone())
+                };
+                self.insert_identity(
+                    rel,
+                    NuxeoIdentity::File {
+                        doc_path: doc.path,
+                        xpath: target_xpath,
+                        length: len,
+                        digest,
+                    },
+                );
+                Ok(())
+            }
+            Err(e) => {
+                self.drop_batch(&batch_id);
+                Err(e)
+            }
+        }
+    }
+
+    fn rename(&self, from: &RelPath, to: &RelPath) -> Result<(), SourceError> {
+        if from.is_root() || to.is_root() {
+            return Err(SourceError::Other("cannot rename root".to_owned()));
+        }
+        self.check_not_in_doc_dir(from)?;
+        self.check_not_in_doc_dir(to)?;
+
+        let from_ident = self
+            .resolve_identity(from)?
+            .ok_or_else(|| SourceError::Io {
+                path: from.to_string(),
+                source: std::io::Error::from(std::io::ErrorKind::NotFound),
+            })?;
+        let from_doc_path = match &from_ident {
+            NuxeoIdentity::Folder { doc_path }
+            | NuxeoIdentity::File { doc_path, .. }
+            | NuxeoIdentity::DocDir { doc_path, .. } => doc_path.clone(),
+        };
+
+        let to_parent = to.parent().unwrap();
+        self.create_dir_all(&to_parent)?;
+        let to_parent_doc_path = match self.resolve_identity(&to_parent)? {
+            Some(NuxeoIdentity::Folder { doc_path }) => doc_path,
+            _ => {
+                return Err(SourceError::Other(format!(
+                    "Nuxeo: target parent '{to_parent}' is not a folder"
+                )));
+            }
+        };
+
+        let to_name = to.file_name().unwrap();
+        let to_sanitized = sanitize_name(to_name);
+
+        let moved_doc = match self.move_doc(&from_doc_path, &to_parent_doc_path, &to_sanitized, to_name) {
+            Ok(doc) => doc,
+            Err(e) => {
+                self.forget_subtree_of(from);
+                self.forget_children_of(&to_parent);
+                return Err(e);
+            }
+        };
+
+        // Update identity cache
+        self.forget_subtree_of(from);
+        match from_ident {
+            NuxeoIdentity::File { xpath, length, .. } => {
+                self.insert_identity(
+                    to,
+                    NuxeoIdentity::File {
+                        doc_path: moved_doc.path,
+                        xpath,
+                        length,
+                        digest: moved_doc.properties.file_content.and_then(|b| b.digest),
+                    },
+                );
+            }
+            NuxeoIdentity::Folder { .. } => {
+                self.insert_identity(
+                    to,
+                    NuxeoIdentity::Folder {
+                        doc_path: moved_doc.path,
+                    },
+                );
+            }
+            NuxeoIdentity::DocDir { blobs, .. } => {
+                self.insert_identity(
+                    to,
+                    NuxeoIdentity::DocDir {
+                        doc_path: moved_doc.path,
+                        blobs,
+                    },
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn supports_atomic_replace(&self) -> bool {
+        false
+    }
+
+    fn remove(&self, rel: &RelPath) -> Result<(), SourceError> {
+        if rel.is_root() {
+            return Err(SourceError::Other("cannot remove root".to_owned()));
+        }
+        self.check_not_in_doc_dir(rel)?;
+
+        let ident = self.resolve_identity(rel)?.ok_or_else(|| SourceError::Io {
+            path: rel.to_string(),
+            source: std::io::Error::from(std::io::ErrorKind::NotFound),
+        })?;
+        let doc_path = match ident {
+            NuxeoIdentity::Folder { doc_path }
+            | NuxeoIdentity::File { doc_path, .. }
+            | NuxeoIdentity::DocDir { doc_path, .. } => doc_path,
+        };
+
+        self.delete_doc(&doc_path)?;
+        self.forget_subtree_of(rel);
+        Ok(())
+    }
+
+    fn copy_from(&self, rel: &RelPath, data: &dyn ContentReader) -> Result<(), SourceError> {
+        // The default SourceMut::copy_from calls self.remove(rel) on write_file failure
+        // when supports_atomic_replace is false.
+        // On Nuxeo, write_file uploads to a temporary batch first before attaching to the document.
+        // A failure during upload or attachment leaves the target document untouched.
+        // Calling remove(rel) on failure would delete an existing document!
+        // Therefore, we delegate directly to write_file without deleting rel on error.
+        self.write_file(rel, data)
     }
 }
 

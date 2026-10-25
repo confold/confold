@@ -1194,11 +1194,10 @@ mod tests {
             .fields
             .iter()
             .any(|f| f.key == "secret_access_key" && f.secret));
-        // Nuxeo registered read-only: capabilities gate it to compare/migrate-origin, never a write
-        // destination.
+        // Nuxeo registered with read + write capabilities (supports compare/migrate/sync as origin and destination).
         let nuxeo = types.iter().find(|t| t.id == "nuxeo").unwrap();
         assert!(nuxeo.capabilities.list && nuxeo.capabilities.read);
-        assert!(!nuxeo.capabilities.write);
+        assert!(nuxeo.capabilities.write);
         assert_eq!(nuxeo.icon, "nuxeo");
         assert!(nuxeo.fields.iter().any(|f| f.key == "password" && f.secret));
     }

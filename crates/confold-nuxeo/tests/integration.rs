@@ -982,3 +982,871 @@ async fn route_browser_lists_the_configured_root_not_the_repository_root() {
     assert_eq!(page.entries.len(), 1);
     assert_eq!(page.entries[0].path, "/ws/workspaces");
 }
+
+#[tokio::test]
+async fn create_dir_all_creates_folders_hierarchically_and_is_idempotent() {
+    let server = MockServer::start().await;
+    ws_doc_mock().mount(&server).await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/path/ws/@children"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "entity-type": "documents",
+            "isNextPageAvailable": false,
+            "entries": []
+        })))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/path/ws"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+            "entity-type": "document",
+            "uid": "sub-1",
+            "path": "/ws/sub",
+            "title": "sub",
+            "type": "Folder",
+            "state": "project",
+            "lastModified": "2026-09-20T10:00:00.00Z",
+            "facets": ["Folderish"],
+            "properties": {}
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/path/ws/sub"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+            "entity-type": "document",
+            "uid": "nested-1",
+            "path": "/ws/sub/nested",
+            "title": "nested",
+            "type": "Folder",
+            "state": "project",
+            "lastModified": "2026-09-20T10:00:00.00Z",
+            "facets": ["Folderish"],
+            "properties": {}
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let base_url = server.uri();
+    run_sync(move || {
+        use confold_vfs::SourceMut;
+        let src = NuxeoSource::connect(config(base_url)).unwrap();
+        let target = RelPath::root().child("sub").child("nested");
+        src.create_dir_all(&target).unwrap();
+        // Second call is idempotent: no extra POSTs
+        src.create_dir_all(&target).unwrap();
+    });
+}
+
+#[tokio::test]
+async fn write_file_uploads_blob_and_creates_document() {
+    let server = MockServer::start().await;
+    ws_doc_mock().mount(&server).await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/path/ws/@children"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "entity-type": "documents",
+            "isNextPageAvailable": false,
+            "entries": []
+        })))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/upload"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+            "batchId": "batch-123"
+        })))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/upload/batch-123/0"))
+        .and(header("X-File-Name", "hello.txt"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+            "uploaded": "true",
+            "fileIdx": "0"
+        })))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/path/ws"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+            "entity-type": "document",
+            "uid": "doc-1",
+            "path": "/ws/hello.txt",
+            "title": "hello.txt",
+            "type": "File",
+            "state": "project",
+            "lastModified": "2026-09-20T10:00:00.00Z",
+            "facets": [],
+            "properties": {
+                "file:content": {
+                    "name": "hello.txt",
+                    "length": 11,
+                    "digest": "d41d8cd98f00b204e9800998ecf8427e"
+                }
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    let base_url = server.uri();
+    run_sync(move || {
+        use confold_vfs::{ContentReader, SourceMut};
+        struct SimpleReader(&'static [u8]);
+        impl ContentReader for SimpleReader {
+            fn len(&self) -> u64 {
+                self.0.len() as u64
+            }
+            fn read_at(
+                &self,
+                offset: u64,
+                buf: &mut [u8],
+            ) -> Result<usize, confold_vfs::SourceError> {
+                if offset >= self.len() {
+                    return Ok(0);
+                }
+                let n = (self.len() - offset).min(buf.len() as u64) as usize;
+                buf[..n].copy_from_slice(&self.0[offset as usize..offset as usize + n]);
+                Ok(n)
+            }
+        }
+        let src = NuxeoSource::connect(config(base_url)).unwrap();
+        let data = SimpleReader(b"hello world");
+        src.write_file(&RelPath::root().child("hello.txt"), &data)
+            .unwrap();
+    });
+}
+
+#[tokio::test]
+async fn write_file_zero_bytes_uploads_empty_blob() {
+    let server = MockServer::start().await;
+    ws_doc_mock().mount(&server).await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/path/ws/@children"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "entity-type": "documents",
+            "isNextPageAvailable": false,
+            "entries": []
+        })))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/upload"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+            "batchId": "batch-empty"
+        })))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/upload/batch-empty/0"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+            "uploaded": "true",
+            "fileIdx": "0"
+        })))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/path/ws"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+            "entity-type": "document",
+            "uid": "doc-empty",
+            "path": "/ws/empty.txt",
+            "title": "empty.txt",
+            "type": "File",
+            "state": "project",
+            "lastModified": "2026-09-20T10:00:00.00Z",
+            "facets": [],
+            "properties": {
+                "file:content": {
+                    "name": "empty.txt",
+                    "length": 0,
+                    "digest": "empty-digest"
+                }
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    let base_url = server.uri();
+    run_sync(move || {
+        use confold_vfs::{ContentReader, SourceMut};
+        struct EmptyReader;
+        impl ContentReader for EmptyReader {
+            fn len(&self) -> u64 {
+                0
+            }
+            fn read_at(
+                &self,
+                _offset: u64,
+                _buf: &mut [u8],
+            ) -> Result<usize, confold_vfs::SourceError> {
+                Ok(0)
+            }
+        }
+        let src = NuxeoSource::connect(config(base_url)).unwrap();
+        src.write_file(&RelPath::root().child("empty.txt"), &EmptyReader)
+            .unwrap();
+    });
+}
+
+#[tokio::test]
+async fn write_file_updates_existing_file_via_put() {
+    let server = MockServer::start().await;
+    ws_doc_mock().mount(&server).await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/path/ws/@children"))
+        .and(query_param("properties", "file,files"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "entity-type": "documents",
+            "isNextPageAvailable": false,
+            "entries": [{
+                "uid": "doc-existing",
+                "path": "/ws/existing.txt",
+                "title": "existing.txt",
+                "type": "File",
+                "state": "project",
+                "lastModified": "2026-09-20T10:00:00.00Z",
+                "facets": [],
+                "properties": {
+                    "file:content": {
+                        "name": "existing.txt",
+                        "length": 5,
+                        "digest": "old-digest"
+                    }
+                }
+            }]
+        })))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/upload"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+            "batchId": "batch-update"
+        })))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/upload/batch-update/0"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+            "uploaded": "true"
+        })))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("PUT"))
+        .and(path("/api/v1/path/ws/existing.txt"))
+        .and(header("X-Versioning-Option", "minor"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "entity-type": "document",
+            "uid": "doc-existing",
+            "path": "/ws/existing.txt",
+            "title": "existing.txt",
+            "type": "File",
+            "state": "project",
+            "lastModified": "2026-09-20T11:00:00.00Z",
+            "facets": [],
+            "properties": {
+                "file:content": {
+                    "name": "existing.txt",
+                    "length": 8,
+                    "digest": "new-digest"
+                }
+            }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let base_url = server.uri();
+    run_sync(move || {
+        use confold_vfs::{ContentReader, SourceMut};
+        struct SimpleReader(&'static [u8]);
+        impl ContentReader for SimpleReader {
+            fn len(&self) -> u64 {
+                self.0.len() as u64
+            }
+            fn read_at(
+                &self,
+                offset: u64,
+                buf: &mut [u8],
+            ) -> Result<usize, confold_vfs::SourceError> {
+                if offset >= self.len() {
+                    return Ok(0);
+                }
+                let n = (self.len() - offset).min(buf.len() as u64) as usize;
+                buf[..n].copy_from_slice(&self.0[offset as usize..offset as usize + n]);
+                Ok(n)
+            }
+        }
+        let src = NuxeoSource::connect(config(base_url)).unwrap();
+        let _ = src.read_dir(&RelPath::root()).unwrap();
+        let data = SimpleReader(b"new data");
+        src.write_file(&RelPath::root().child("existing.txt"), &data)
+            .unwrap();
+    });
+}
+
+#[tokio::test]
+async fn copy_from_failure_does_not_delete_destination_file() {
+    let server = MockServer::start().await;
+    ws_doc_mock().mount(&server).await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/path/ws/@children"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "entity-type": "documents",
+            "isNextPageAvailable": false,
+            "entries": [{
+                "uid": "doc-existing",
+                "path": "/ws/target.txt",
+                "title": "target.txt",
+                "type": "File",
+                "state": "project",
+                "lastModified": "2026-09-20T10:00:00.00Z",
+                "facets": [],
+                "properties": {
+                    "file:content": {
+                        "name": "target.txt",
+                        "length": 10
+                    }
+                }
+            }]
+        })))
+        .mount(&server)
+        .await;
+
+    // Batch init fails with HTTP 500
+    Mock::given(method("POST"))
+        .and(path("/api/v1/upload"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
+
+    // Server must NOT receive any DELETE for target.txt
+    Mock::given(method("DELETE"))
+        .and(path("/api/v1/path/ws/target.txt"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    let base_url = server.uri();
+    run_sync(move || {
+        use confold_vfs::{ContentReader, SourceMut};
+        struct SimpleReader(&'static [u8]);
+        impl ContentReader for SimpleReader {
+            fn len(&self) -> u64 {
+                self.0.len() as u64
+            }
+            fn read_at(
+                &self,
+                offset: u64,
+                buf: &mut [u8],
+            ) -> Result<usize, confold_vfs::SourceError> {
+                if offset >= self.len() {
+                    return Ok(0);
+                }
+                let n = (self.len() - offset).min(buf.len() as u64) as usize;
+                buf[..n].copy_from_slice(&self.0[offset as usize..offset as usize + n]);
+                Ok(n)
+            }
+        }
+        let src = NuxeoSource::connect(config(base_url)).unwrap();
+        let _ = src.read_dir(&RelPath::root()).unwrap();
+        let data = SimpleReader(b"new content");
+        let res = src.copy_from(&RelPath::root().child("target.txt"), &data);
+        assert!(res.is_err());
+    });
+}
+
+#[tokio::test]
+async fn remove_deletes_document_via_delete() {
+    let server = MockServer::start().await;
+    ws_doc_mock().mount(&server).await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/path/ws/@children"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "entity-type": "documents",
+            "isNextPageAvailable": false,
+            "entries": [{
+                "uid": "doc-del",
+                "path": "/ws/del.txt",
+                "title": "del.txt",
+                "type": "File",
+                "state": "project",
+                "lastModified": "2026-09-20T10:00:00.00Z",
+                "facets": [],
+                "properties": {
+                    "file:content": {
+                        "name": "del.txt",
+                        "length": 5
+                    }
+                }
+            }]
+        })))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("DELETE"))
+        .and(path("/api/v1/path/ws/del.txt"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let base_url = server.uri();
+    run_sync(move || {
+        use confold_vfs::SourceMut;
+        let src = NuxeoSource::connect(config(base_url)).unwrap();
+        let _ = src.read_dir(&RelPath::root()).unwrap();
+        src.remove(&RelPath::root().child("del.txt")).unwrap();
+    });
+}
+
+#[tokio::test]
+async fn rename_moves_document_via_automation_move() {
+    let server = MockServer::start().await;
+    ws_doc_mock().mount(&server).await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/path/ws/@children"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "entity-type": "documents",
+            "isNextPageAvailable": false,
+            "entries": [{
+                "uid": "doc-from",
+                "path": "/ws/from.txt",
+                "title": "from.txt",
+                "type": "File",
+                "state": "project",
+                "lastModified": "2026-09-20T10:00:00.00Z",
+                "facets": [],
+                "properties": {
+                    "file:content": {
+                        "name": "from.txt",
+                        "length": 5
+                    }
+                }
+            }]
+        })))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/path/ws/from.txt/@op/Document.Move"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "entity-type": "document",
+            "uid": "doc-from",
+            "path": "/ws/to.txt",
+            "title": "from.txt",
+            "type": "File",
+            "state": "project",
+            "lastModified": "2026-09-20T10:00:00.00Z",
+            "facets": [],
+            "properties": {
+                "file:content": {
+                    "name": "from.txt",
+                    "length": 5
+                }
+            }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    Mock::given(method("PUT"))
+        .and(path("/api/v1/path/ws/to.txt"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "entity-type": "document",
+            "uid": "doc-from",
+            "path": "/ws/to.txt",
+            "title": "to.txt",
+            "type": "File",
+            "state": "project",
+            "lastModified": "2026-09-20T10:05:00.00Z",
+            "facets": [],
+            "properties": {
+                "file:content": {
+                    "name": "to.txt",
+                    "length": 5
+                }
+            }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let base_url = server.uri();
+    run_sync(move || {
+        use confold_vfs::SourceMut;
+        let src = NuxeoSource::connect(config(base_url)).unwrap();
+        let _ = src.read_dir(&RelPath::root()).unwrap();
+        src.rename(
+            &RelPath::root().child("from.txt"),
+            &RelPath::root().child("to.txt"),
+        )
+        .unwrap();
+    });
+}
+
+#[tokio::test]
+async fn rename_failure_on_title_put_propagates_error() {
+    let server = MockServer::start().await;
+    ws_doc_mock().mount(&server).await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/path/ws/@children"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "entity-type": "documents",
+            "isNextPageAvailable": false,
+            "entries": [{
+                "uid": "doc-from2",
+                "path": "/ws/doc.txt",
+                "title": "doc.txt",
+                "type": "File",
+                "state": "project",
+                "lastModified": "2026-09-20T10:00:00.00Z",
+                "facets": [],
+                "properties": {
+                    "file:content": {
+                        "name": "doc.txt",
+                        "length": 5
+                    }
+                }
+            }]
+        })))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/path/ws/doc.txt/@op/Document.Move"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "entity-type": "document",
+            "uid": "doc-from2",
+            "path": "/ws/doc-renamed.txt",
+            "title": "doc.txt",
+            "type": "File",
+            "state": "project",
+            "lastModified": "2026-09-20T10:00:00.00Z",
+            "facets": [],
+            "properties": {
+                "file:content": {
+                    "name": "doc.txt",
+                    "length": 5
+                }
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    // PUT fails with HTTP 500
+    Mock::given(method("PUT"))
+        .and(path("/api/v1/path/ws/doc-renamed.txt"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let base_url = server.uri();
+    run_sync(move || {
+        use confold_vfs::SourceMut;
+        let src = NuxeoSource::connect(config(base_url)).unwrap();
+        let _ = src.read_dir(&RelPath::root()).unwrap();
+        let res = src.rename(
+            &RelPath::root().child("doc.txt"),
+            &RelPath::root().child("doc-renamed.txt"),
+        );
+        assert!(res.is_err(), "rename must fail when title/filename PUT fails");
+    });
+}
+
+#[tokio::test]
+async fn write_file_updates_attachment_only_document_via_files_files() {
+    let server = MockServer::start().await;
+    ws_doc_mock().mount(&server).await;
+
+    // Document has NO file:content, but has 1 attachment in files:files
+    Mock::given(method("GET"))
+        .and(path("/api/v1/path/ws/@children"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "entity-type": "documents",
+            "isNextPageAvailable": false,
+            "entries": [{
+                "uid": "doc-att-only",
+                "path": "/ws/attachment_doc",
+                "title": "solitary.pdf",
+                "type": "File",
+                "state": "project",
+                "lastModified": "2026-09-20T10:00:00.00Z",
+                "facets": [],
+                "properties": {
+                    "files:files": [{
+                        "file": {
+                            "name": "solitary.pdf",
+                            "length": 50
+                        }
+                    }]
+                }
+            }]
+        })))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/upload"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+            "batchId": "batch-att"
+        })))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/upload/batch-att/0"))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+            "uploaded": "true"
+        })))
+        .mount(&server)
+        .await;
+
+    // Must PUT into files:files, NOT file:content
+    Mock::given(method("PUT"))
+        .and(path("/api/v1/path/ws/attachment_doc"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "entity-type": "document",
+            "uid": "doc-att-only",
+            "path": "/ws/attachment_doc",
+            "title": "solitary.pdf",
+            "type": "File",
+            "state": "project",
+            "lastModified": "2026-09-20T10:05:00.00Z",
+            "facets": [],
+            "properties": {
+                "files:files": [{
+                    "file": {
+                        "name": "solitary.pdf",
+                        "length": 80
+                    }
+                }]
+            }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/path/ws/attachment_doc/@blob/files:files/0/file"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(b"updated attachment".to_vec()))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let base_url = server.uri();
+    run_sync(move || {
+        use confold_vfs::{ContentReader, Source, SourceMut};
+        struct SimpleReader(&'static [u8]);
+        impl ContentReader for SimpleReader {
+            fn len(&self) -> u64 {
+                self.0.len() as u64
+            }
+            fn read_at(
+                &self,
+                offset: u64,
+                buf: &mut [u8],
+            ) -> Result<usize, confold_vfs::SourceError> {
+                if offset >= self.len() {
+                    return Ok(0);
+                }
+                let n = (self.len() - offset).min(buf.len() as u64) as usize;
+                buf[..n].copy_from_slice(&self.0[offset as usize..offset as usize + n]);
+                Ok(n)
+            }
+        }
+        let src = NuxeoSource::connect(config(base_url)).unwrap();
+        let _ = src.read_dir(&RelPath::root()).unwrap();
+        let data = SimpleReader(b"updated attachment");
+        src.write_file(&RelPath::root().child("solitary.pdf"), &data)
+            .unwrap();
+
+        // Codex Comment 2 check: verify subsequent open resolves the preserved attachment XPath
+        let reader = src.open(&RelPath::root().child("solitary.pdf")).unwrap();
+        assert_eq!(reader.len(), 18);
+        let mut buf = vec![0u8; 18];
+        assert_eq!(reader.read_at(0, &mut buf).unwrap(), 18);
+        assert_eq!(&buf, b"updated attachment");
+    });
+}
+
+#[tokio::test]
+async fn mutating_inside_docdir_is_rejected() {
+    let server = MockServer::start().await;
+    ws_doc_mock().mount(&server).await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/path/ws/@children"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "entity-type": "documents",
+            "isNextPageAvailable": false,
+            "entries": [{
+                "uid": "multi-1",
+                "path": "/ws/contract",
+                "title": "contract",
+                "type": "File",
+                "state": "project",
+                "lastModified": "2026-09-20T10:00:00.00Z",
+                "facets": [],
+                "properties": {
+                    "file:content": { "name": "main.pdf", "length": 100 },
+                    "files:files": [{ "file": { "name": "signed.pdf", "length": 120 } }]
+                }
+            }]
+        })))
+        .mount(&server)
+        .await;
+
+    let base_url = server.uri();
+    run_sync(move || {
+        use confold_vfs::{ContentReader, SourceMut};
+        struct SimpleReader;
+        impl ContentReader for SimpleReader {
+            fn len(&self) -> u64 {
+                0
+            }
+            fn read_at(
+                &self,
+                _offset: u64,
+                _buf: &mut [u8],
+            ) -> Result<usize, confold_vfs::SourceError> {
+                Ok(0)
+            }
+        }
+        let src = NuxeoSource::connect(config(base_url)).unwrap();
+        let _ = src.read_dir(&RelPath::root()).unwrap();
+
+        let child = RelPath::root().child("contract").child("new_blob.txt");
+        let err = src.write_file(&child, &SimpleReader).unwrap_err();
+        assert!(err.to_string().contains("DocDir") || err.to_string().contains("multi-blob"));
+
+        let subdir = RelPath::root().child("contract").child("subdir");
+        let err2 = src.create_dir_all(&subdir).unwrap_err();
+        assert!(err2.to_string().contains("DocDir") || err2.to_string().contains("multi-blob"));
+    });
+}
+
+#[tokio::test]
+async fn rename_multi_blob_docdir_preserves_attachments() {
+    let server = MockServer::start().await;
+    ws_doc_mock().mount(&server).await;
+
+    Mock::given(method("GET"))
+        .and(path("/api/v1/path/ws/@children"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "entity-type": "documents",
+            "isNextPageAvailable": false,
+            "entries": [{
+                "uid": "multi-doc",
+                "path": "/ws/bundle",
+                "title": "bundle",
+                "type": "File",
+                "state": "project",
+                "lastModified": "2026-09-20T10:00:00.00Z",
+                "facets": [],
+                "properties": {
+                    "files:files": [
+                        { "file": { "name": "doc1.pdf", "length": 100 } },
+                        { "file": { "name": "doc2.pdf", "length": 200 } }
+                    ]
+                }
+            }]
+        })))
+        .mount(&server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/api/v1/path/ws/bundle/@op/Document.Move"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "entity-type": "document",
+            "uid": "multi-doc",
+            "path": "/ws/bundle-renamed",
+            "title": "bundle",
+            "type": "File",
+            "state": "project",
+            "lastModified": "2026-09-20T10:00:00.00Z",
+            "facets": [],
+            "properties": {
+                "files:files": [
+                    { "file": { "name": "doc1.pdf", "length": 100 } },
+                    { "file": { "name": "doc2.pdf", "length": 200 } }
+                ]
+            }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    // Must update ONLY dc:title, and NOT replace files:files with a single file!
+    Mock::given(method("PUT"))
+        .and(path("/api/v1/path/ws/bundle-renamed"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "entity-type": "document",
+            "uid": "multi-doc",
+            "path": "/ws/bundle-renamed",
+            "title": "bundle-renamed",
+            "type": "File",
+            "state": "project",
+            "lastModified": "2026-09-20T10:05:00.00Z",
+            "facets": [],
+            "properties": {
+                "files:files": [
+                    { "file": { "name": "doc1.pdf", "length": 100 } },
+                    { "file": { "name": "doc2.pdf", "length": 200 } }
+                ]
+            }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let base_url = server.uri();
+    run_sync(move || {
+        use confold_vfs::SourceMut;
+        let src = NuxeoSource::connect(config(base_url)).unwrap();
+        let _ = src.read_dir(&RelPath::root()).unwrap();
+        src.rename(
+            &RelPath::root().child("bundle"),
+            &RelPath::root().child("bundle-renamed"),
+        )
+        .unwrap();
+    });
+
+    let requests = server.received_requests().await.unwrap();
+    let put_request = requests
+        .iter()
+        .find(|r| r.method.as_str() == "PUT" && r.url.path() == "/api/v1/path/ws/bundle-renamed")
+        .expect("PUT request should have been made");
+    let put_json: serde_json::Value = serde_json::from_slice(&put_request.body).unwrap();
+    assert!(
+        put_json["properties"].get("files:files").is_none(),
+        "multi-blob DocDir rename should not overwrite files:files"
+    );
+    assert_eq!(
+        put_json["properties"]["dc:title"],
+        "bundle-renamed"
+    );
+}

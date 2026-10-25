@@ -325,13 +325,11 @@ impl SourceKind for NuxeoKind {
         "nuxeo"
     }
     fn capabilities(&self) -> Capabilities {
-        // List + read + fingerprint (blob digests); no write — the write target of the owner's
-        // migration is Paperless-ngx (a later backend), never Nuxeo itself.
         Capabilities {
             list: true,
             read: true,
             fingerprint: true,
-            write: false,
+            write: true,
         }
     }
     fn fields(&self) -> Vec<FieldSpec> {
@@ -353,6 +351,9 @@ impl SourceKind for NuxeoKind {
         format!("nuxeo:{}@{}/{}", g("username"), g("url"), g("root"))
     }
     fn build_source(&self, f: &FieldValues) -> Result<Box<dyn Source>, String> {
+        Ok(Box::new(self.connect(f, None)?))
+    }
+    fn build_source_mut(&self, f: &FieldValues) -> Result<Box<dyn SourceMut>, String> {
         Ok(Box::new(self.connect(f, None)?))
     }
 }
