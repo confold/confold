@@ -98,6 +98,8 @@ jobs:
           TRACK_NUM=$(gh issue list --repo "$REPO" --state open --label "$TRACK_LABEL" \
             --json number --jq '.[0].number' 2>/dev/null || true)
 
+          FOOTER="This tracking issue is maintained automatically by daily distribution verification. Direct channels (Homebrew, Scoop) update on release; winget and Chocolatey clear external moderation."
+
           if [[ ${#pending[@]} -eq 0 ]]; then
             echo "All channels live for v${VERSION}; no tracking issue needed."
           else
